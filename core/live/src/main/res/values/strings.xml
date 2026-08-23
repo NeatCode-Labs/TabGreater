@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- IMPORTANCE_MIN channel for the specialUse foreground service. POST_NOTIFICATIONS is never
+         requested, so this text is only ever visible in the system's "active apps" list. -->
+    <string name="live_service_channel_name">Live widget updates</string>
+    <string name="live_service_title">TabGreater live widgets</string>
+    <string name="live_service_text">Keeping home-screen prices up to date</string>
+</resources>

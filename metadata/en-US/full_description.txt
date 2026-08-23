@@ -1,0 +1,42 @@
+TabGreater is a crypto watchlist for Android. It shows live spot prices from five exchanges as a grid of tiles, each with its own mini-chart, and puts the pairs you care about on your home screen. There is no account to create, no ads, no tracking and no backend of any kind — your phone talks to the exchanges directly.
+
+<b>Watchlists</b>
+
+* Several named lists, each with its own layout: four tile sizes, two per row (Small, Compact) or full width (Medium, Large)
+* A sparkline on every tile over 1 hour, 24 hours, 7 days or 30 days
+* Five sort orders — Custom, Exchange + Pair, Pair + Exchange, Price, Change; drag to reorder, long-press to colour, move or delete a tile
+* Export and import every list as a JSON file, so a new phone is one file away
+
+<b>Live prices</b>
+
+* A WebSocket stream while the app is open on Binance, Gate.io, Kraken and KuCoin; MEXC has no public ticker socket and is polled over REST
+* Candles are cached on disk, so tiles and charts are never empty on a cold start
+* Prices in en-US formatting, with signed percentages and "shrink zeros" for sub-cent pairs (0.0₄123)
+
+<b>Charts</b>
+
+* Candlestick, hollow candle, OHLC bar and area styles
+* Timeframes from 1 minute to 1 month, panning back through history on most exchanges (Kraken's public API only returns its newest ~720 bars)
+* 11 indicators: MA, EMA, BOLL, SAR, VOL, MACD, RSI, KDJ, CCI, DMI, OBV
+* Logarithmic or automatic scale, a fullscreen mode, and sharing the chart as a PNG
+
+<b>Home-screen widgets</b>
+
+* One pair per widget. It drops as 2 x 1 and resizes from 110 x 40 dp up to 4 x 2 and beyond, drawing the same layout at every size
+* The sparkline is a switch, on by default, and always shows the last 24 hours
+* A refresh cadence of your choice, from timed updates to a live connection
+* No notification of any kind, and a measured cost of about 1.5 % of the battery per day for three widgets at the default five-minute cadence
+
+<b>Exchanges</b>
+
+Spot markets from Binance, Gate.io, Kraken, KuCoin and MEXC. Exchange names are trademarks of their respective owners; TabGreater is not affiliated with, endorsed by or sponsored by any exchange.
+
+<b>Privacy</b>
+
+TabGreater has no server and collects nothing. Because prices come straight from each exchange's public API, your IP address and the pairs you watch are visible to the exchanges you use, under their terms. Nothing else leaves the device.
+
+<b>Disclaimer</b>
+
+Prices are indicative and may be delayed, incomplete or wrong. TabGreater executes no trades, holds no API keys and is not financial advice. Use it at your own risk.
+
+Android 8.0 or newer. Free and open source.

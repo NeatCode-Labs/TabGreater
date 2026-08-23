@@ -1,0 +1,30 @@
+TabGreater
+Copyright (C) 2026 NeatCode Labs
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. See LICENSE (GPL-3.0-or-later).
+
+Third-party components included in the app:
+
+KLineChart (https://github.com/klinecharts/KLineChart) — Apache License 2.0
+Copyright (c) 2019 lihu
+  which includes: TradingView Lightweight Charts, Copyright (c) 2019 TradingView, Inc.
+  Vendored at app/src/main/assets/chart/vendor/klinecharts.js — the unminified UMD build of
+  release 10.0.2, byte-for-byte from upstream, with its LICENSE and NOTICE kept verbatim.
+  Provenance and checksum: app/src/main/assets/chart/vendor/UPSTREAM.md (the build verifies it).
+
+Righteous font (https://github.com/google/fonts/tree/main/ofl/righteous) — SIL Open Font License 1.1
+Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic, Reserved Font Name "Righteous"
+  Bundled at app/src/main/res/font/righteous_regular.ttf; licence in LICENSES/OFL-1.1-Righteous.txt.
+
+Kotlin, kotlinx.coroutines, kotlinx.serialization — Apache License 2.0, JetBrains s.r.o.
+AndroidX (Jetpack Compose, Material 3, Material Icons, Navigation, Room, DataStore,
+WorkManager, Glance, WebKit, Core SplashScreen) — Apache License 2.0, The Android Open Source Project
+OkHttp — Apache License 2.0, Square, Inc.
+Koin — Apache License 2.0, Kotzilla and contributors
+
+Market data is fetched by the app directly from the public APIs of Binance, Gate.io, Kraken,
+KuCoin and MEXC; the list of popular pairs is powered by CoinGecko. Exchange names are trademarks
+of their respective owners. TabGreater is an independent project and is not affiliated with,
+endorsed by or sponsored by any exchange or data provider.

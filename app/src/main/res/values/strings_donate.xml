@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Donation strings. Shipped in every flavour so the resources stay identical, but the row that
+  uses them is only composed in the `foss` flavour (see Donate.isAvailable).
+-->
+<resources>
+    <string name="settings_donate_title">Support the project</string>
+    <string name="settings_donate_sub">Ko-fi · Monero</string>
+
+    <string name="donate_dialog_title">Support development</string>
+    <string name="donate_dialog_message">If TabGreater is useful to you, consider supporting its development. Donations keep the project going; they unlock nothing in the app.</string>
+    <string name="donate_kofi">Ko-fi</string>
+    <string name="donate_monero">Monero (tap to copy address)</string>
+    <string name="donate_copied">Address copied</string>
+    <string name="donate_clip_label">Monero address</string>
+</resources>

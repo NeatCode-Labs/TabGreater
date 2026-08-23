@@ -1,0 +1,8 @@
+Initial public release.
+
+• Watchlists of live spot pairs from Binance, Gate.io, Kraken, KuCoin and MEXC
+• Tiles in four sizes with a 1 h / 24 h / 7 d / 30 d sparkline, drag to reorder, colour tags
+• Candlestick charts, 1 m to 1 M, 11 indicators, fullscreen, share as PNG
+• Resizable home-screen widgets with a refresh cadence of your choice and no notification
+• JSON export and import of every watchlist
+• No account, no ads, no tracking, no backend

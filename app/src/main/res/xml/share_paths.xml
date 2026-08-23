@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the chart screenshots: ChartShare writes to cacheDir/shared and nowhere else. -->
+<paths>
+    <cache-path
+        name="shared"
+        path="shared/" />
+</paths>

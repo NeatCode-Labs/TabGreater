@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static preview shown in the Android 12+ widget picker (previewLayout). It is never inflated
+     as the running widget: Glance builds that RemoteViews tree itself. It mirrors the one shape
+     the widget has at every size — PAIR then the exchange badge, full-width sparkline, price with
+     the 24 h change at the far end — at the reference scale of a 2 x 1 slot. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/tg_widget_preview_background"
+    android:baselineAligned="false"
+    android:orientation="vertical"
+    android:paddingHorizontal="9dp"
+    android:paddingVertical="7dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:text="@string/widget_preview_pair"
+            android:textColor="@color/tg_widget_text_primary"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/tg_widget_badge"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="@string/widget_preview_monogram"
+            android:textColor="@color/tg_widget_text_tertiary"
+            android:textSize="7sp"
+            tools:ignore="SmallSp" />
+    </LinearLayout>
+
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginVertical="3dp"
+        android:layout_weight="1"
+        android:contentDescription="@null"
+        android:scaleType="fitXY"
+        android:src="@drawable/tg_widget_preview_spark" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="bottom"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:text="@string/widget_preview_price"
+            android:textColor="@color/tg_widget_text_primary"
+            android:textSize="18sp" />
+
+        <!-- The change takes the slack and sits at the far end: RemoteViews does not allow a
+             Space, and this preview is inflated under those restrictions. -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:maxLines="1"
+            android:text="@string/widget_preview_change"
+            android:textColor="@color/tg_widget_up"
+            android:textSize="13sp" />
+    </LinearLayout>
+</LinearLayout>

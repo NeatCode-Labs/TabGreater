@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Google Play build. Two of the permissions declared by :core:live are Play policy violations for a
+  watchlist app, so the merger strips them from this flavour:
+
+  * USE_EXACT_ALARM is restricted to alarm clock and calendar apps.
+  * REQUEST_IGNORE_BATTERY_OPTIMIZATIONS is restricted to a short list of use cases that does not
+    cover a home-screen widget.
+
+  SCHEDULE_EXACT_ALARM stays: it is the runtime-granted path and is allowed here. Losing the other
+  two only costs the play build the one-tap battery dialog and the auto-granted exact alarm; the
+  widget falls back to the user-granted alarm permission and to WorkManager.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.USE_EXACT_ALARM"
+        tools:node="remove" />
+
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:node="remove" />
+
+</manifest>

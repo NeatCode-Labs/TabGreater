@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App colour tokens. Keep in sync with core/model TTColors. -->
+    <color name="tt_background">#FF141515</color>
+    <!-- Launcher icon background: the navy of the app logo (art/launcher-logo.jpg). -->
+    <color name="launcher_background">#FF0F1D37</color>
+</resources>

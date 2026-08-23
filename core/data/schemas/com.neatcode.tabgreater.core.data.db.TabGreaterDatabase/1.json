@@ -1,0 +1,365 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "b630636a12cfcef50c9d62c9b40d4d4e",
+    "entities": [
+      {
+        "tableName": "watchlists",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `position` INTEGER NOT NULL, `period` TEXT NOT NULL, `tile_size` TEXT NOT NULL, `sort` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "period",
+            "columnName": "period",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tileSize",
+            "columnName": "tile_size",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sort",
+            "columnName": "sort",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "watchlist_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `watchlist_id` INTEGER NOT NULL, `market_key` TEXT NOT NULL, `position` INTEGER NOT NULL, `accent_color` INTEGER, FOREIGN KEY(`watchlist_id`) REFERENCES `watchlists`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "watchlistId",
+            "columnName": "watchlist_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "marketKey",
+            "columnName": "market_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accentColor",
+            "columnName": "accent_color",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_watchlist_items_watchlist_id",
+            "unique": false,
+            "columnNames": [
+              "watchlist_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_watchlist_items_watchlist_id` ON `${TABLE_NAME}` (`watchlist_id`)"
+          },
+          {
+            "name": "index_watchlist_items_watchlist_id_market_key",
+            "unique": true,
+            "columnNames": [
+              "watchlist_id",
+              "market_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_watchlist_items_watchlist_id_market_key` ON `${TABLE_NAME}` (`watchlist_id`, `market_key`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "watchlists",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "watchlist_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "markets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`market_key` TEXT NOT NULL, `exchange` TEXT NOT NULL, `base` TEXT NOT NULL, `quote` TEXT NOT NULL, `native_symbol` TEXT NOT NULL, `price_precision` INTEGER NOT NULL, `tick_size` REAL, `active` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`market_key`))",
+        "fields": [
+          {
+            "fieldPath": "marketKey",
+            "columnName": "market_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "exchange",
+            "columnName": "exchange",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "base",
+            "columnName": "base",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quote",
+            "columnName": "quote",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nativeSymbol",
+            "columnName": "native_symbol",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pricePrecision",
+            "columnName": "price_precision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tickSize",
+            "columnName": "tick_size",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "active",
+            "columnName": "active",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "market_key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_markets_exchange",
+            "unique": false,
+            "columnNames": [
+              "exchange"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_markets_exchange` ON `${TABLE_NAME}` (`exchange`)"
+          },
+          {
+            "name": "index_markets_base",
+            "unique": false,
+            "columnNames": [
+              "base"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_markets_base` ON `${TABLE_NAME}` (`base`)"
+          },
+          {
+            "name": "index_markets_quote",
+            "unique": false,
+            "columnNames": [
+              "quote"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_markets_quote` ON `${TABLE_NAME}` (`quote`)"
+          }
+        ]
+      },
+      {
+        "tableName": "candles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`market_key` TEXT NOT NULL, `timeframe` TEXT NOT NULL, `open_time` INTEGER NOT NULL, `open` REAL NOT NULL, `high` REAL NOT NULL, `low` REAL NOT NULL, `close` REAL NOT NULL, `volume` REAL NOT NULL, PRIMARY KEY(`market_key`, `timeframe`, `open_time`))",
+        "fields": [
+          {
+            "fieldPath": "marketKey",
+            "columnName": "market_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeframe",
+            "columnName": "timeframe",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "openTime",
+            "columnName": "open_time",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "open",
+            "columnName": "open",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "high",
+            "columnName": "high",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "low",
+            "columnName": "low",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "close",
+            "columnName": "close",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "volume",
+            "columnName": "volume",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "market_key",
+            "timeframe",
+            "open_time"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_candles_market_key_timeframe_open_time",
+            "unique": false,
+            "columnNames": [
+              "market_key",
+              "timeframe",
+              "open_time"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_candles_market_key_timeframe_open_time` ON `${TABLE_NAME}` (`market_key`, `timeframe`, `open_time`)"
+          }
+        ]
+      },
+      {
+        "tableName": "ticker_snapshots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`market_key` TEXT NOT NULL, `last` REAL NOT NULL, `open_24h` REAL, `high_24h` REAL, `low_24h` REAL, `volume_base_24h` REAL, `volume_quote_24h` REAL, `change_pct_24h` REAL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`market_key`))",
+        "fields": [
+          {
+            "fieldPath": "marketKey",
+            "columnName": "market_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "last",
+            "columnName": "last",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "open24h",
+            "columnName": "open_24h",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "high24h",
+            "columnName": "high_24h",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "low24h",
+            "columnName": "low_24h",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "volumeBase24h",
+            "columnName": "volume_base_24h",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "volumeQuote24h",
+            "columnName": "volume_quote_24h",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "changePct24h",
+            "columnName": "change_pct_24h",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "market_key"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b630636a12cfcef50c9d62c9b40d4d4e')"
+    ]
+  }
+}

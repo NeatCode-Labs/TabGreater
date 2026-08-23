@@ -1,0 +1,25 @@
+# Normalise line endings: LF in the repository and in the working tree on every platform.
+* text=auto eol=lf
+
+# Windows scripts keep CRLF so cmd.exe can run them.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Vendored upstream artefacts are stored byte-for-byte: the build verifies their SHA-256 against
+# the published release (app/src/main/assets/chart/vendor/UPSTREAM.md), and normalising line endings
+# would change those bytes and fail the check in a fresh clone.
+app/src/main/assets/chart/vendor/** -text
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.jar binary
+*.jks binary
+*.keystore binary
+*.apk binary
+*.aab binary
+*.ttf binary
+*.otf binary

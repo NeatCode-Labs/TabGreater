@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TabGreater</string>
+    <string name="nav_watchlists">Watchlists</string>
+    <string name="nav_settings">Settings</string>
+    <string name="fab_add_ticker">Add pair</string>
+
+    <!-- Watchlists -->
+    <string name="watchlist_empty">No tickers yet</string>
+
+    <!-- Ticker search -->
+    <string name="search_placeholder">Search pair, e.g. BTC/EUR</string>
+    <string name="search_hint">Type to search</string>
+    <string name="search_no_match">No markets match</string>
+    <string name="search_add">Add %1$d</string>
+
+    <!-- Content descriptions -->
+    <string name="cd_back">Back</string>
+    <string name="cd_add_ticker">Add ticker</string>
+    <string name="cd_add_selected">Add selected markets</string>
+    <string name="cd_manage_watchlists">Manage watchlists</string>
+    <string name="cd_selected">Selected</string>
+
+    <!-- F3: tiles (Compact / Medium / Large) -->
+    <string name="tile_high">High</string>
+    <string name="tile_low">Low</string>
+    <string name="tile_volume">Volume</string>
+    <!-- /F3: tiles -->
+
+    <!-- F3: watchlist interactions (sheets, selection mode, drag) -->
+    <string name="sheet_period_title">Sparkline period</string>
+    <string name="sheet_size_title">Tile size</string>
+    <string name="sheet_sort_title">Sort by</string>
+    <string name="sheet_colour_title">Tile colour</string>
+    <string name="sheet_move_title">Move to watchlist</string>
+    <string name="sheet_move_empty">No other watchlists</string>
+    <plurals name="selection_count">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <string name="watchlist_fill">%1$d/%2$d</string>
+    <string name="cd_clear_selection">Clear selection</string>
+    <string name="cd_move_to_top">Move to top</string>
+    <string name="cd_ticker_colour">Tile colour</string>
+    <string name="cd_move_to_list">Move to watchlist</string>
+    <string name="cd_delete_selected">Delete selected tickers</string>
+    <string name="cd_colour_none">No colour</string>
+    <string name="cd_colour_swatch">Colour %1$d</string>
+    <!-- /F3: watchlist interactions -->
+
+    <!-- F3: watchlist manager -->
+    <string name="manager_title">Watchlists</string>
+    <string name="manager_count">%1$d/%2$d</string>
+    <string name="manager_new_placeholder">New watchlist</string>
+    <plurals name="manager_limit_reached">
+        <item quantity="one">Limit of %1$d watchlist reached</item>
+        <item quantity="other">Limit of %1$d watchlists reached</item>
+    </plurals>
+    <string name="manager_keep_one">Keep at least one watchlist</string>
+    <string name="manager_deleted">Watchlist deleted</string>
+    <string name="manager_restore_failed">Could not restore the watchlist</string>
+    <string name="manager_rename">Rename</string>
+    <string name="manager_copy">Copy</string>
+    <string name="manager_delete">Delete</string>
+    <string name="manager_rename_title">Rename watchlist</string>
+    <string name="action_undo">UNDO</string>
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="cd_create_watchlist">Create watchlist</string>
+    <string name="cd_reorder_watchlist">Reorder watchlist</string>
+    <string name="cd_watchlist_actions">Watchlist actions</string>
+    <string name="cd_delete_watchlist">Delete watchlist</string>
+    <string name="cd_sheet_handle">Drag handle</string>
+    <!-- /F3: watchlist manager -->
+
+    <!-- F3: settings, export / import -->
+    <string name="settings_section_display">DISPLAY</string>
+    <string name="settings_section_watchlists">WATCHLISTS</string>
+    <string name="settings_section_about">ABOUT</string>
+    <string name="settings_shrink_zeros">Shrink zeros</string>
+    <string name="settings_shrink_zeros_sub">Show 0.0₄123 instead of 0.0000123</string>
+    <string name="settings_watchlist_rate">Watchlist refresh rate</string>
+    <string name="settings_watchlist_rate_sub">Every %1$s · prices and mini-charts redraw this often; exchange connections stay live</string>
+    <string name="settings_export">Export watchlists</string>
+    <string name="settings_export_sub">Save all lists as a JSON file</string>
+    <string name="settings_import">Import watchlists</string>
+    <string name="settings_import_sub">Restore lists from a JSON file</string>
+    <string name="settings_about_title">TabGreater</string>
+    <string name="settings_about_sub">Version %1$s · GPL-3.0-or-later · 5 exchanges\nAbout, data sources, disclaimer, licences</string>
+    <string name="settings_source_title">Source code</string>
+    <string name="settings_source_sub">github.com/NeatCode-Labs/TabGreater</string>
+
+    <!-- About screen -->
+    <string name="about_title">About TabGreater</string>
+    <string name="about_version">TabGreater %1$s — a free, open-source crypto watchlist with charts and home-screen widgets. Live spot data from Binance, Gate.io, Kraken, KuCoin and MEXC.</string>
+    <string name="about_independent">TabGreater is an independent open-source project by NeatCode Labs, released under the GNU General Public License v3.0 or later: you may use, study, share and improve it, and anyone who distributes a modified version must publish their source under the same licence and keep this notice. It is not affiliated with, endorsed by or sponsored by any exchange. Exchange names are trademarks of their respective owners.</string>
+    <string name="about_data_title">Data sources &amp; privacy</string>
+    <string name="about_data_body">Prices and candles travel straight from each exchange\'s public API to your device. TabGreater has no server, no account and no analytics, and collects nothing. Because your phone talks to the exchanges directly, your IP address and the pairs you watch are visible to the exchanges you use, under their own terms of service. Watchlists and settings stay on your device (and in your Android backup, if you have it enabled).</string>
+    <string name="about_disclaimer_title">Disclaimer</string>
+    <string name="about_disclaimer_body">Prices are indicative and may be delayed, incomplete or wrong. TabGreater executes no trades, holds no API keys and gives no financial advice. Use it at your own risk.</string>
+    <string name="about_thirdparty_title">Third-party software</string>
+    <string name="about_thirdparty_note">Thank you to everyone who builds and maintains these.</string>
+    <string name="about_notice_title">Notices</string>
+    <string name="about_licence_title">GNU General Public License v3</string>
+    <string name="about_apache_title">Apache License 2.0 (KLineChart and libraries)</string>
+    <string name="about_ofl_title">SIL Open Font License 1.1 (Righteous)</string>
+    <string name="about_loading">Loading…</string>
+    <plurals name="settings_exported">
+        <item quantity="one">Exported %1$d watchlist</item>
+        <item quantity="other">Exported %1$d watchlists</item>
+    </plurals>
+    <string name="settings_export_failed">Export failed: %1$s</string>
+    <string name="settings_export_failed_unknown">Export failed</string>
+    <string name="settings_import_not_a_backup">Not a TabGreater backup file</string>
+    <string name="settings_import_failed">Import failed: %1$s</string>
+    <string name="settings_import_failed_unknown">Import failed</string>
+    <string name="settings_imported">Import done — new lists: %1$d · merged: %2$d · tickers added: %3$d · skipped: %4$d</string>
+    <string name="settings_imported_over_limit">%1$s · lists over the limit: %2$d</string>
+    <string name="import_dialog_title">Import backup</string>
+    <plurals name="import_dialog_message">
+        <item quantity="one">Import %1$d watchlist (%2$d tickers)?</item>
+        <item quantity="other">Import %1$d watchlists (%2$d tickers)?</item>
+    </plurals>
+    <string name="import_replace">Replace all</string>
+    <string name="import_replace_hint">Delete every current list and keep only the imported ones.</string>
+    <string name="import_merge">Merge</string>
+    <string name="import_merge_hint">Keep the current lists and add whatever is missing.</string>
+    <!-- /F3: settings -->
+
+    <!-- F4: chart -->
+    <string name="cd_chart_star">Add to watchlist</string>
+    <string name="cd_chart_unstar">Remove from watchlist</string>
+    <string name="cd_chart_type">Chart type</string>
+    <string name="cd_chart_indicators">Indicators</string>
+    <string name="cd_chart_fullscreen">Fullscreen</string>
+    <string name="cd_chart_fullscreen_exit">Leave fullscreen</string>
+    <string name="cd_chart_share">Share chart</string>
+    <string name="chart_share_failed">Could not capture the chart</string>
+    <string name="chart_stat_24h">24h</string>
+    <string name="chart_stat_ask">Ask</string>
+    <string name="chart_stat_bid">Bid</string>
+    <string name="chart_stat_high">High</string>
+    <string name="chart_stat_low">Low</string>
+    <string name="chart_stat_volume">Volume</string>
+    <string name="chart_scale_log">log</string>
+    <string name="chart_scale_auto">auto</string>
+    <string name="chart_type_title">Chart type</string>
+    <string name="chart_type_candles">Candles</string>
+    <string name="chart_type_hollow">Hollow candles</string>
+    <string name="chart_type_ohlc">OHLC bars</string>
+    <string name="chart_type_area">Area</string>
+    <string name="chart_indicators_title">Indicators</string>
+    <string name="chart_unavailable">%1$s is not listed on this exchange</string>
+    <string name="chart_star_list_full">Watchlist is full (%1$d)</string>
+    <string name="chart_star_no_list">No watchlist</string>
+    <!-- /F4: chart -->
+
+    <!-- F5: settings — the WIDGETS section (widget cadence, OEM background limits) -->
+    <string name="settings_section_widgets">WIDGETS</string>
+    <string name="settings_widget_refresh">Widget refresh</string>
+    <string name="settings_widget_refresh_hint">Timed modes use short requests (cheapest on battery). Live falls back to every 5 minutes while the screen is off.</string>
+    <string name="settings_widget_refresh_live">Live</string>
+    <string name="settings_widget_refresh_live_row">Live (2 s while the screen is on)</string>
+    <string name="settings_widget_refresh_live_hint">Every 2 s while the screen is on; keeps a connection open</string>
+    <string name="settings_widget_refresh_1m">Every minute</string>
+    <string name="settings_widget_refresh_2m">Every 2 minutes</string>
+    <string name="settings_widget_refresh_5m">Every 5 minutes</string>
+    <string name="settings_widget_refresh_5m_hint">Recommended</string>
+    <string name="settings_widget_refresh_15m">Every 15 minutes</string>
+    <string name="settings_wifi_only">Live only on Wi-Fi</string>
+    <string name="settings_wifi_only_sub">On mobile data, check every 15 s instead of keeping a connection open</string>
+    <!-- Watchlist refresh rate sheet: "1 s" … "10 s". -->
+    <string name="settings_interval_seconds">%1$d s</string>
+    <string name="settings_battery">Battery optimisation</string>
+    <string name="settings_battery_unrestricted">Unrestricted</string>
+    <string name="settings_battery_restricted">Tap to allow unrestricted background use</string>
+    <string name="settings_live_status">Status</string>
+    <string name="settings_samsung">One UI battery checklist</string>
+    <string name="settings_samsung_sub">Four One UI settings the widget service needs</string>
+    <string name="samsung_dialog_title">One UI battery checklist</string>
+    <string name="samsung_step_battery">1. Settings → Apps → TabGreater → Battery → Unrestricted</string>
+    <string name="samsung_step_never_sleeping">2. Settings → Battery → Background usage limits → Never sleeping apps → add TabGreater (skip if it is not offered: unrestricted apps are already exempt)</string>
+    <string name="samsung_step_unused">3. Settings → Battery → Background usage limits → Put unused apps to sleep → off</string>
+    <string name="samsung_step_auto_blocker">4. Settings → Security and privacy → Auto Blocker → off (for ADB installs)</string>
+    <string name="samsung_open_settings">Open app settings</string>
+    <string name="action_close">Close</string>
+    <!-- /F5: settings -->
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors core/model TTColors; used only by the static widget preview layout and the
+         configuration activity's window background, which cannot read Kotlin constants. -->
+    <color name="tg_widget_background">#141515</color>
+    <color name="tg_widget_surface">#202121</color>
+    <color name="tg_widget_text_primary">#FFFFFF</color>
+    <color name="tg_widget_text_tertiary">#737271</color>
+    <color name="tg_widget_up">#60A86B</color>
+</resources>

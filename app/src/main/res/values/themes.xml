@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-only app theme. Compose draws everything; this only covers window background + system bars. -->
+    <style name="Theme.TabGreater" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/tt_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.TabGreater.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/tt_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.TabGreater</item>
+    </style>
+</resources>

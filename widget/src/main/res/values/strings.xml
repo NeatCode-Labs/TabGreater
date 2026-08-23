@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget provider -->
+    <string name="widget_label">TabGreater Ticker</string>
+    <string name="widget_description">One pair: price, 24 h change and sparkline. Tap to open the chart.</string>
+    <string name="widget_tap_to_configure">Tap to configure</string>
+    <string name="widget_updated_at">Updated %1$s</string>
+    <string name="widget_refresh_glyph">↻</string>
+
+    <!-- Preview layout (Android 12+ widget picker) -->
+    <string name="widget_preview_monogram">KR</string>
+    <string name="widget_preview_pair">BTC/EUR</string>
+    <string name="widget_preview_price">65,609.70</string>
+    <string name="widget_preview_change">+6.52%</string>
+
+    <!-- Configuration screen -->
+    <string name="widget_config_title">Ticker widget</string>
+    <string name="widget_config_preview">Preview</string>
+    <string name="widget_config_preview_pair">Pick a pair</string>
+    <string name="widget_config_search_hint">Search pair, e.g. BTC/EUR</string>
+    <string name="widget_config_search_label">Search pair</string>
+    <string name="widget_config_background_swatch">Background colour %1$s</string>
+    <string name="widget_config_loading">Loading markets…</string>
+    <string name="widget_config_no_match">No markets match</string>
+    <string name="widget_config_background">Background</string>
+    <string name="widget_config_transparency">Transparency</string>
+    <string name="widget_config_percent">%1$d%%</string>
+    <string name="widget_config_sparkline">Show sparkline</string>
+    <string name="widget_config_sparkline_note">24 hours, from the cached candles</string>
+    <string name="widget_config_cancel">Cancel</string>
+    <string name="widget_config_save">Save</string>
+</resources>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>TabGreater chart</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #141515; color: #A8ABB2;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;                     /* all gestures belong to the canvas */
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    font: 12px/1.2 "Roboto", "Helvetica Neue", sans-serif;
+  }
+  #chart { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #141515; }
+</style>
+</head>
+<body>
+  <div id="chart"></div>
+  <!-- Unminified upstream release; see vendor/UPSTREAM.md for provenance and checksum. -->
+  <script src="vendor/klinecharts.js"></script>
+  <script src="chart.js"></script>
+</body>
+</html>

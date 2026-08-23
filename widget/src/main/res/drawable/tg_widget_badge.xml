@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The exchange monogram's hairline frame, mirroring ExchangeBadgeRenderer's fractions at the
+     reference badge size (12 dp: corner = 12 x 0.2). Used only by the picker preview; the running
+     widget rasterises its badge so it can scale with the slot. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="2.4dp" />
+    <stroke
+        android:width="0.75dp"
+        android:color="@color/tg_widget_text_tertiary" />
+</shape>

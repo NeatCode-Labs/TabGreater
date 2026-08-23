@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The configuration activity paints itself with Compose; the platform theme only has to
+         avoid a white flash before the first frame. -->
+    <style name="Theme.TabGreater.WidgetConfig" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/tg_widget_background</item>
+    </style>
+</resources>

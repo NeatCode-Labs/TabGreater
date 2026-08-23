@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis="0": the 30-minute system broadcast is disabled on purpose. Updates come
+     from LiveTickerService, the WorkManager safety net and the widget's own refresh tap
+    .
+
+     widgetFeatures="reconfigurable|configuration_optional": the widget is bound straight away and
+     renders its own "Tap to configure" state, instead of the launcher blocking the drop on the
+     configuration activity. Verified on the emulator (Pixel launcher, Android 15): with a
+     mandatory configuration the Pixel launcher drops the widget unbound and then crashes with
+     "Bad widget id" when its pencil button is pressed.
+
+     maxResizeWidth/Height are deliberately far above the 4 x 2 the widget is designed for:
+     Launcher3 derives the maximum span from these dp values against the *landscape* cell size,
+     which is much wider than the portrait one. 400dp x 240dp — the sizes that look right on paper
+     for a 4 x 2 — capped the widget at three portrait columns on the Pixel grid (emulator,
+     Android 15); 600dp x 400dp lets it reach four columns and two rows. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:configure="com.neatcode.tabgreater.widget.WidgetConfigActivity"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:maxResizeHeight="400dp"
+    android:maxResizeWidth="600dp"
+    android:minHeight="40dp"
+    android:minResizeHeight="40dp"
+    android:minResizeWidth="110dp"
+    android:minWidth="110dp"
+    android:previewLayout="@layout/tg_widget_ticker_preview"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="1"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    android:widgetFeatures="reconfigurable|configuration_optional"
+    tools:targetApi="s" />

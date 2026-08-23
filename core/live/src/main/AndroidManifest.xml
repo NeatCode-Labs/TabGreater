@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!--
+      Sideloaded personal app: Play's "alarm/timer apps only" policy for
+      USE_EXACT_ALARM does not apply. SCHEDULE_EXACT_ALARM is the fallback path for a future
+      Android that revokes the auto-granted one.
+    -->
+    <uses-permission
+        android:name="android.permission.USE_EXACT_ALARM"
+        tools:ignore="ExactAlarm" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- One-tap battery allowlist dialog offered from Settings; lifts Doze's while-idle quota. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- POST_NOTIFICATIONS is deliberately NOT declared: the FGS notification must stay out of
+         the shade: this app never posts a notification of any kind. -->
+
+    <application>
+
+        <service
+            android:name="com.neatcode.tabgreater.core.live.LiveTickerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="live_market_data_for_home_screen_widget" />
+        </service>
+
+        <receiver
+            android:name="com.neatcode.tabgreater.core.live.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.neatcode.tabgreater.core.live.TickAlarmReceiver"
+            android:exported="false" />
+
+        <!--
+          Koin builds the WorkManager configuration in TabGreaterApp (workManagerFactory()), so
+          the androidx.startup initializer must not run first — it would initialise WorkManager
+          with the default factory and make the Koin call throw.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+    </application>
+
+</manifest>

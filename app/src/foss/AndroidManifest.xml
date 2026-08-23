@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  GitHub Releases / F-Droid build. Nothing to change: the library manifests already
+  declare exactly the permissions this track is allowed to ship, including USE_EXACT_ALARM and
+  REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, which the `play` flavour has to drop.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

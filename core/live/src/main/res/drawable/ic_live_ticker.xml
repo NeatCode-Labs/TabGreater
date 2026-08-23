@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for the (never visible) foreground-service notification: a small price line. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,15.6l4.2,-4.2 3,3 5.4,-5.4 1.6,1.6v-4.2h-4.2l1.6,1.6 -4.4,4.4 -3,-3L2,14.2z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,18h18v2H3z" />
+</vector>

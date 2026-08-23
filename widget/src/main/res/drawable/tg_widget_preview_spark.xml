@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The fake 24 h shape in the static widget-picker preview. The running widget draws a real
+     bitmap (SparklineRenderer); this is only what the picker shows before a pair is chosen. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="72dp"
+    android:height="40dp"
+    android:viewportWidth="72"
+    android:viewportHeight="40">
+
+    <!-- Area under the line: the tile's 22 % tint fading to transparent. -->
+    <path android:pathData="M1,31 L10,25 L19,28 L28,19 L37,22 L46,12 L55,15 L64,6 L71,3 L71,40 L1,40 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="0"
+                android:endY="40"
+                android:startX="0"
+                android:startY="0"
+                android:type="linear">
+                <item
+                    android:color="#3860A86B"
+                    android:offset="0" />
+                <item
+                    android:color="#0060A86B"
+                    android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <path
+        android:pathData="M1,31 L10,25 L19,28 L28,19 L37,22 L46,12 L55,15 L64,6 L71,3"
+        android:strokeColor="@color/tg_widget_up"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.6" />
+</vector>

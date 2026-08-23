@@ -1,0 +1,57 @@
+# Gradle
+.gradle/
+build/
+**/build/
+.kotlin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local config & secrets (never commit)
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.cxx/
+captures/
+.externalNativeBuild/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.log
+/scratch/
+
+# Stray binaries
+*.aar
+
+# agent scratch dirs
+.scratch/
+
+# release artefacts (APK + R8 mapping) stay local
+dist/
+
+# Private project material (owner's notes, research, reference images, screenshots) — never published
+docs/private/
+
+# Release procedure — maintainer-only (keystore handling, signing, publishing); lives in docs/private/
+docs/RELEASING.md
+RELEASING.md
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code local settings and project instructions
+.claude/
+CLAUDE.md

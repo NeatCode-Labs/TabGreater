@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Launcher icon (art/launcher-logo.jpg): the "T + rising arrow" glyph
+    keyed out of the source JPG as a bitmap foreground (50 dp tall, centred in the 66 dp safe
+    zone), the navy sampled from the same picture as a flat background, and the glyph's alpha as
+    the monochrome layer for themed icons. tools/launcher_icon.py regenerates the PNGs.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>
