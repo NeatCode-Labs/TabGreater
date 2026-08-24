@@ -114,6 +114,9 @@ CurrentVersion: 1.0.0
 CurrentVersionCode: 1
 ```
 
+That is the 1.0.0 entry; each later release appends another `Builds:` block and bumps
+`CurrentVersion`/`CurrentVersionCode`.
+
 Every one of these details was learned by having a CI job fail on it:
 
 | Field | Rule |

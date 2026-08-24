@@ -1,0 +1,4 @@
+Accessibility and wording.
+
+• The "Add pair" button now announces "Add pair" to screen readers; it used to say "Add ticker", which did not match its visible label
+• The empty watchlist, the delete action and the import summary say "pairs" too, so the app uses one word for one thing

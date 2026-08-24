@@ -7,7 +7,7 @@
 <h3 align="center">Crypto watchlist with live prices, charts and home-screen widgets. No account, no ads, no tracking.</h3>
 
 <p align="center">
-  <a href="https://github.com/NeatCode-Labs/TabGreater/releases/latest"><img src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" alt="Version 1.0.0"></a>
+  <a href="https://github.com/NeatCode-Labs/TabGreater/releases/latest"><img src="https://img.shields.io/badge/version-1.0.1-blue?style=flat-square" alt="Version 1.0.1"></a>
   <a href="https://developer.android.com/about/versions/oreo"><img src="https://img.shields.io/badge/Android-8.0+-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8.0 or newer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square" alt="GPL-3.0-or-later license"></a>
   <a href="docs/PRIVACY.md"><img src="https://img.shields.io/badge/telemetry-none-success?style=flat-square" alt="No telemetry"></a>
