@@ -45,7 +45,7 @@ fun PeriodSheet(
     }
 }
 
-/** The sheet behind the second chip: tile layout (reference `tm_22.png`). */
+/** The sheet behind the second chip: tile layout — Small, Compact, Medium, Large. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TileSizeSheet(

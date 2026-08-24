@@ -241,7 +241,7 @@ private fun ManagerSnackbarEffect(
     }
 }
 
-/** `Watchlists` on the left, `5/20` on the right. */
+/** `Watchlists` on the left, `5/25` on the right. */
 @Composable
 private fun ManagerHeader(count: Int) {
     Row(

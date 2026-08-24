@@ -6,7 +6,7 @@
     <string name="fab_add_ticker">Add pair</string>
 
     <!-- Watchlists -->
-    <string name="watchlist_empty">No tickers yet</string>
+    <string name="watchlist_empty">No pairs yet</string>
 
     <!-- Ticker search -->
     <string name="search_placeholder">Search pair, e.g. BTC/EUR</string>
@@ -16,7 +16,7 @@
 
     <!-- Content descriptions -->
     <string name="cd_back">Back</string>
-    <string name="cd_add_ticker">Add ticker</string>
+    <string name="cd_add_ticker">Add pair</string>
     <string name="cd_add_selected">Add selected markets</string>
     <string name="cd_manage_watchlists">Manage watchlists</string>
     <string name="cd_selected">Selected</string>
@@ -43,7 +43,7 @@
     <string name="cd_move_to_top">Move to top</string>
     <string name="cd_ticker_colour">Tile colour</string>
     <string name="cd_move_to_list">Move to watchlist</string>
-    <string name="cd_delete_selected">Delete selected tickers</string>
+    <string name="cd_delete_selected">Delete selected pairs</string>
     <string name="cd_colour_none">No colour</string>
     <string name="cd_colour_swatch">Colour %1$d</string>
     <!-- /F3: watchlist interactions -->
@@ -114,12 +114,12 @@
     <string name="settings_import_not_a_backup">Not a TabGreater backup file</string>
     <string name="settings_import_failed">Import failed: %1$s</string>
     <string name="settings_import_failed_unknown">Import failed</string>
-    <string name="settings_imported">Import done — new lists: %1$d · merged: %2$d · tickers added: %3$d · skipped: %4$d</string>
+    <string name="settings_imported">Import done — new lists: %1$d · merged: %2$d · pairs added: %3$d · skipped: %4$d</string>
     <string name="settings_imported_over_limit">%1$s · lists over the limit: %2$d</string>
     <string name="import_dialog_title">Import backup</string>
     <plurals name="import_dialog_message">
-        <item quantity="one">Import %1$d watchlist (%2$d tickers)?</item>
-        <item quantity="other">Import %1$d watchlists (%2$d tickers)?</item>
+        <item quantity="one">Import %1$d watchlist (%2$d pairs)?</item>
+        <item quantity="other">Import %1$d watchlists (%2$d pairs)?</item>
     </plurals>
     <string name="import_replace">Replace all</string>
     <string name="import_replace_hint">Delete every current list and keep only the imported ones.</string>

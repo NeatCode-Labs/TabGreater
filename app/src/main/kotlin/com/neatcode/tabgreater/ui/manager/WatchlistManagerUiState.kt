@@ -39,7 +39,7 @@ data class ManagerMessage(val id: Long, val kind: ManagerMessageKind)
 /**
  * State of the Watchlist Manager sheet.
  *
- * @property count number of watchlists, rendered as `count/20` in the header.
+ * @property count number of watchlists, rendered as `count/25` in the header.
  * @property canAdd `false` once the 25-list cap is reached; disables the new-list field.
  * @property pendingUndo a delete snapshot is still held, so "UNDO" can restore it.
  */
