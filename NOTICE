@@ -12,7 +12,7 @@ Copyright (c) 2019 lihu
   which includes: TradingView Lightweight Charts, Copyright (c) 2019 TradingView, Inc.
   Vendored at app/src/main/assets/chart/vendor/klinecharts.js — the unminified UMD build of
   release 10.0.2, byte-for-byte from upstream, with its LICENSE and NOTICE kept verbatim.
-  Provenance and checksum: app/src/main/assets/chart/vendor/UPSTREAM.md (the build verifies it).
+  Provenance and checksum: docs/VENDORED-KLINECHART.md (the build verifies it).
 
 Righteous font (https://github.com/google/fonts/tree/main/ofl/righteous) — SIL Open Font License 1.1
 Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic, Reserved Font Name "Righteous"

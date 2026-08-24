@@ -146,12 +146,12 @@ dependencies {
  * Vendored third-party assets: the exact file, from the exact upstream release, or the build stops.
  *
  * `app/src/main/assets/chart/vendor/klinecharts.js` is copied byte-for-byte out of the KLineChart
- * npm release (see `UPSTREAM.md` beside it for the tarball URL and its registry integrity hash).
+ * npm release (see `docs/VENDORED-KLINECHART.md` for the tarball URL and the registry integrity hash).
  * Checking the digest on every build turns "we vendored upstream's file" from a claim in a README
  * into something the build itself enforces: nobody can quietly patch a 674 KB dependency, and a
  * reviewer — F-Droid's included — can verify the shipped bytes against the published release.
  *
- * Update both this map and `UPSTREAM.md` when the library is upgraded.
+ * Update both this map and `docs/VENDORED-KLINECHART.md` when the library is upgraded.
  */
 val vendoredAssets = mapOf(
     "src/main/assets/chart/vendor/klinecharts.js" to
@@ -184,7 +184,7 @@ val verifyVendoredAssets by tasks.registering {
                     appendLine("  actual   $actual")
                     append(
                         "If the library was upgraded on purpose, update app/build.gradle.kts and " +
-                            "app/src/main/assets/chart/vendor/UPSTREAM.md together.",
+                            "docs/VENDORED-KLINECHART.md together.",
                     )
                 }
             }

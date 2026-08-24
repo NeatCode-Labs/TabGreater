@@ -34,7 +34,7 @@ Two product flavours share the same code and package name and differ only in wha
 | `:widget` | Glance home-screen widget + configuration activity |
 | `:app` | Compose UI, navigation, Koin wiring |
 
-The chart library (KLineChart 10.0.2, Apache-2.0) is vendored at `app/src/main/assets/chart/vendor/klinecharts.js` — the **unminified** UMD build, copied byte-for-byte from the upstream npm release, with its LICENSE and NOTICE. No npm is involved in the build. `:app:verifyVendoredAssets` runs before every build and fails it if that file is not the exact upstream release recorded in `app/src/main/assets/chart/vendor/UPSTREAM.md`.
+The chart library (KLineChart 10.0.2, Apache-2.0) is vendored at `app/src/main/assets/chart/vendor/klinecharts.js` — the **unminified** UMD build, copied byte-for-byte from the upstream npm release, with its LICENSE and NOTICE. No npm is involved in the build. `:app:verifyVendoredAssets` runs before every build and fails it if that file is not the exact upstream release recorded in `VENDORED-KLINECHART.md`.
 
 ## Release
 

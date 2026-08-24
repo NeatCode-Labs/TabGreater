@@ -27,7 +27,7 @@ internal data class TileNumbers(
 /**
  * Assembles everything a tile needs from the live ticker and the cached sparkline window.
  *
- * The "Tickers Timeframe" sheet drives the sparkline, the % change **and** the
+ * The "Sparkline period" sheet drives the sparkline, the % change **and** the
  * high/low/volume together, so only the 24 h period may fall back to the exchange's own
  * rolling statistic; every other period is measured across the window itself.
  */

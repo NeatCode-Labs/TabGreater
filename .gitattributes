@@ -6,7 +6,7 @@
 *.cmd text eol=crlf
 
 # Vendored upstream artefacts are stored byte-for-byte: the build verifies their SHA-256 against
-# the published release (app/src/main/assets/chart/vendor/UPSTREAM.md), and normalising line endings
+# the published release (docs/VENDORED-KLINECHART.md), and normalising line endings
 # would change those bytes and fail the check in a fresh clone.
 app/src/main/assets/chart/vendor/** -text
 

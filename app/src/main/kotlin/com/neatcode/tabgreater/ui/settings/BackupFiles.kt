@@ -46,7 +46,7 @@ class ContentResolverBackupIo(private val context: Context) : BackupIo {
 /** Pure helpers around the export/import documents. */
 object BackupFiles {
 
-    /** Refuse anything that cannot plausibly be a watchlist backup (20 lists × 100 tickers). */
+    /** Refuse anything that cannot plausibly be a watchlist backup (25 lists × 120 tickers). */
     const val MAX_BYTES: Int = 5 * 1024 * 1024
 
     const val MIME_JSON: String = "application/json"

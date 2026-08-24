@@ -30,8 +30,8 @@ diffable form. That is handled, and the answer is short:
 
 - The asset is `app/src/main/assets/chart/vendor/klinecharts.js` — the **unminified** UMD build,
   copied byte-for-byte out of the upstream npm release.
-- `app/src/main/assets/chart/vendor/UPSTREAM.md` records the tarball URL, the integrity hash npm
-  publishes for it, the file's SHA-256, and how to reproduce the extraction in four commands.
+- `docs/VENDORED-KLINECHART.md` records the tarball URL, the integrity hash npm publishes for it,
+  the file's SHA-256, and how to reproduce the extraction in four commands.
 - `:app:verifyVendoredAssets` runs before every build and **fails it** if the file is not that exact
   release. The claim is enforced by the build, not by a promise in a README.
 - Nothing transforms the file, and no npm runs during the build.
@@ -101,7 +101,7 @@ Binaries:
 Builds:
   - versionName: 1.0.0
     versionCode: 1
-    commit: 78028691c0c371a1a7a4755b570f40f58260fc9c
+    commit: 3a178be9037a49626a82e197343e9dd39cf1a6ab
     subdir: app
     gradle:
       - foss
@@ -153,5 +153,5 @@ Linux environment; the pipeline does the same job.
   comparison cannot find it.
 - If the build recipe needs changing (new AGP, new NDK, a new prebuild step), that is a fresh merge
   request against `fdroiddata`.
-- Watch the build logs at `https://f-droid.org/wiki/page/com.neatcode.tabgreater/lastbuild`; a broken
-  build silently stops updates.
+- Watch https://f-droid.org/packages/com.neatcode.tabgreater/ after each tag: if a build breaks, the
+  new version simply never appears there, silently.

@@ -43,7 +43,7 @@ import com.neatcode.tabgreater.R
 import com.neatcode.tabgreater.ui.theme.TG
 import com.neatcode.tabgreater.ui.theme.TGType
 
-/** Height of one option row in a value picker such as the "Tickers Timeframe" sheet. */
+/** Height of one option row in a value picker such as the "Sparkline period" sheet. */
 private val OptionHeight = 44.dp
 
 /** Same row with a second line of explanation under the label (Settings → Widget refresh). */

@@ -35,7 +35,7 @@ interface WatchlistRepository {
 
     /**
      * Duplicates watchlist [id] (settings, items, order, accent colours) as a new last list
-     * named [name]. Returns the new id, or `null` when [id] is unknown or the 20-list cap is reached.
+     * named [name]. Returns the new id, or `null` when [id] is unknown or the 25-list cap is reached.
      */
     suspend fun copyWatchlist(id: Long, name: String): Long?
 

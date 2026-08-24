@@ -77,7 +77,7 @@ enum class ImportMode {
 /**
  * Outcome of an import.
  * @property itemsSkipped tickers dropped because their key was invalid, a duplicate, or the
- *   list was full; [watchlistsSkipped] lists dropped because the 20-list cap was reached.
+ *   list was full; [watchlistsSkipped] lists dropped because the 25-list cap was reached.
  */
 data class ImportResult(
     val watchlistsAdded: Int,

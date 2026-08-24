@@ -268,7 +268,7 @@ private fun ManagerHeader(count: Int) {
 
 /**
  * The outlined "New watchlist" field with its round submit button. Submitting keeps the focus so
- * several lists can be typed in a row; the field is dead once the 20-list cap is reached.
+ * several lists can be typed in a row; the field is dead once the 25-list cap is reached.
  */
 @Composable
 private fun NewWatchlistField(

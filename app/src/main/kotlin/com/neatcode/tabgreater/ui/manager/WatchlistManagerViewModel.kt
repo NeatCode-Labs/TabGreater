@@ -75,7 +75,7 @@ class WatchlistManagerViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), WatchlistManagerUiState())
 
-    /** Appends a watchlist. Blank names are ignored, long ones clamped, the 20-list cap reported. */
+    /** Appends a watchlist. Blank names are ignored, long ones clamped, the 25-list cap reported. */
     fun create(name: String) {
         val clean = clampName(name) ?: return
         viewModelScope.launch {

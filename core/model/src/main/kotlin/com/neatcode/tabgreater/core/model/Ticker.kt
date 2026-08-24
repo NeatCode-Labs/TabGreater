@@ -59,12 +59,12 @@ enum class Timeframe(val id: String, val seconds: Long, val label: String) {
 }
 
 /**
- * Sparkline look-back period, as picked in the "Tickers Timeframe" sheet.
+ * Sparkline look-back period, as picked in the "Sparkline period" sheet.
  * Drives the sparkline window and the % change shown on tiles.
  *
  * Candle resolution is chosen so the 61 dp sparkline gets the ~60-96 vertices it needs to read
  * as a curve from a single request per market, using only timeframes that all
- * four exchanges serve natively (1m, 15m, 1h, 4h); 7d/30d are downsampled to [candles] / 2.
+ * five exchanges serve natively (1m, 15m, 1h, 4h); 7d/30d are downsampled to [candles] / 2.
  */
 @Serializable
 enum class SparkPeriod(val id: String, val label: String, val timeframe: Timeframe, val candles: Int) {

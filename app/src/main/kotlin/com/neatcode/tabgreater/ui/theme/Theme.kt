@@ -125,7 +125,7 @@ object TGType {
 
     // ---- F3: sheets, manager, settings -----------------------------------------------------
 
-    /** Bottom-sheet title ("Tickers Timeframe", "Watchlists"), 16 sp. */
+    /** Bottom-sheet title ("Sparkline period", "Watchlists"), 16 sp. */
     val sheetTitle = TextStyle(
         fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
         fontSize = 16.sp, lineHeight = 20.sp, color = TG.TextPrimary, platformStyle = Tight,
