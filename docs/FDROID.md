@@ -86,7 +86,7 @@ Categories:
   - Market & Price
 License: GPL-3.0-or-later
 AuthorName: NeatCode Labs
-WebSite: https://neatcodelabs.com/
+WebSite: https://tabgreater.com/
 SourceCode: https://github.com/NeatCode-Labs/TabGreater
 IssueTracker: https://github.com/NeatCode-Labs/TabGreater/issues
 Changelog: https://github.com/NeatCode-Labs/TabGreater/releases

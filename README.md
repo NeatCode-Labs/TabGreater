@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://tabgreater.com">Website</a> ·
   <a href="docs/BUILDING.md">Building</a> ·
   <a href="docs/PRIVACY.md">Privacy</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
@@ -69,9 +70,10 @@ exchanges directly: there is no backend, no account and nothing is collected.
 
 ## Installation
 
-Download the latest signed APK from
-**[GitHub Releases](https://github.com/NeatCode-Labs/TabGreater/releases/latest)**. Every release
-lists the SHA-256 of the APK and of the signing certificate, so you can check what you downloaded.
+Download the latest signed APK from **[tabgreater.com/download](https://tabgreater.com/download)** or
+straight from **[GitHub Releases](https://github.com/NeatCode-Labs/TabGreater/releases/latest)**. Every
+release lists the SHA-256 of the APK and of the signing certificate, so you can check what you
+downloaded.
 
 An F-Droid submission is in review; this section will link it once it is live.
 
