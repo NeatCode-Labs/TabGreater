@@ -87,6 +87,8 @@
     <string name="settings_import_sub">Restore lists from a JSON file</string>
     <string name="settings_about_title">TabGreater</string>
     <string name="settings_about_sub">Version %1$s · GPL-3.0-or-later · 5 exchanges\nAbout, data sources, disclaimer, licences</string>
+    <string name="settings_website_title">Website</string>
+    <string name="settings_website_sub">tabgreater.com</string>
     <string name="settings_source_title">Source code</string>
     <string name="settings_source_sub">github.com/NeatCode-Labs/TabGreater</string>
 

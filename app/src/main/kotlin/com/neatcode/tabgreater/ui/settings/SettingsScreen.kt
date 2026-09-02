@@ -220,6 +220,11 @@ fun SettingsScreen(
                     onClick = onOpenAbout,
                 )
                 SettingRow(
+                    title = stringResource(R.string.settings_website_title),
+                    subtitle = stringResource(R.string.settings_website_sub),
+                    onClick = { context.openUrl(WEBSITE_URL) },
+                )
+                SettingRow(
                     title = stringResource(R.string.settings_source_title),
                     subtitle = stringResource(R.string.settings_source_sub),
                     onClick = { context.openUrl(SOURCE_URL) },
@@ -352,6 +357,7 @@ private fun HintText(@StringRes textRes: Int) {
 }
 
 /** The project page. Outbound links are limited to this and Ko-fi; never an exchange or a referral. */
+private const val WEBSITE_URL = "https://tabgreater.com/"
 private const val SOURCE_URL = "https://github.com/NeatCode-Labs/TabGreater"
 
 internal fun Context.openUrl(url: String) {
