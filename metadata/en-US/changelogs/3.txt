@@ -1,0 +1,7 @@
+Faster return, readable widgets.
+
+• Prices and mini-charts now update within about a second of reopening the app; they used to wait out a whole refresh-rate window (5–10 s) showing the old numbers
+• The mini-chart's last point follows the live price
+• Widget configuration offers the same quick-add pairs as the app
+• Widget text, badge and sparkline pick a dark or light scheme to stay readable on every background colour
+• Settings links to the project website
