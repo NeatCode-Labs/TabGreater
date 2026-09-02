@@ -244,7 +244,9 @@ class WatchlistViewModelTest {
         advanceUntilIdle()
         assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
 
-        // That first quote opens a 5 s window; three more ticks inside it collapse into one redraw.
+        // The next quote is not held either — one free frame per market, so a fresh price never
+        // waits out a window — and *that* one opens the 5 s window the three ticks after it
+        // collapse into.
         live.tickers.value = mapOf(btc to ticker(101.0))
         runCurrent()
         val redrawsBefore = prices.size
@@ -304,6 +306,86 @@ class WatchlistViewModelTest {
         assertEquals(sol, tile.key)
         assertEquals("20.00", tile.priceText)
         assertNotNull("the mini-chart must arrive with the price, not a window later", tile.spark)
+    }
+
+    @Test
+    fun `the first fresh price after a resubscribe is not held for a window`() = runTest(dispatcher) {
+        val listId = watchlists.ensureDefault()
+        watchlists.addItems(listId, listOf(btc))
+        // What Room had on disk: the prices the grid paints before anything reaches the network.
+        live.tickers.value = mapOf(btc to ticker(100.0))
+        val vm = viewModel()
+        collectState(vm)
+        runCurrent()
+        assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
+
+        // The exchange answers 1 s into the 5 s window that stale value opened.
+        advanceTimeBy(1_000)
+        live.tickers.value = mapOf(btc to ticker(101.0))
+        runCurrent()
+
+        assertEquals("101.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("no window may be spent on prices the user is already looking at", 1_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `a tick that draws nothing leaves the free frame to the fresh price`() = runTest(dispatcher) {
+        val listId = watchlists.ensureDefault()
+        watchlists.addItems(listId, listOf(btc))
+        live.tickers.value = mapOf(btc to ticker(100.0))
+        val vm = viewModel()
+        collectState(vm)
+        runCurrent()
+        assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
+
+        // A ticker stream pushes an update roughly once a second whether or not a trade happened:
+        // a new exchange timestamp on an unchanged price draws nothing and must cost nothing.
+        advanceTimeBy(400)
+        live.tickers.value = mapOf(btc to ticker(100.0).copy(timestamp = 1_000L))
+        runCurrent()
+
+        advanceTimeBy(400)
+        live.tickers.value = mapOf(btc to ticker(101.0))
+        runCurrent()
+
+        assertEquals("101.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals(800L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `each tile's first fresh price arrives without waiting for the others`() = runTest(dispatcher) {
+        val listId = watchlists.ensureDefault()
+        watchlists.addItems(listId, listOf(btc, eth))
+        live.tickers.value = mapOf(btc to ticker(100.0), eth to ticker(100.0, eth))
+        val vm = viewModel()
+        collectState(vm)
+        runCurrent()
+
+        // One market's answer must not spend the free frame of the market next to it.
+        advanceTimeBy(500)
+        live.tickers.value = mapOf(btc to ticker(101.0), eth to ticker(100.0, eth))
+        runCurrent()
+        advanceTimeBy(500)
+        live.tickers.value = mapOf(btc to ticker(101.0), eth to ticker(101.0, eth))
+        runCurrent()
+
+        val prices = vm.uiState.value.tiles.associate { it.key to it.priceText }
+        assertEquals("101.00", prices[btc])
+        assertEquals("101.00", prices[eth])
+        assertEquals(1_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `the mini-chart's last point follows the live price`() = runTest(dispatcher) {
+        val listId = watchlists.ensureDefault()
+        watchlists.addItems(listId, listOf(btc))
+        sparklines.setPoints(btc, 1f, 2f)
+        live.tickers.value = mapOf(btc to ticker(3.0))
+        val vm = viewModel()
+        collectState(vm)
+        advanceUntilIdle()
+
+        assertEquals(3f, vm.uiState.value.tiles.single().spark!!.last(), 0f)
     }
 
     private fun ticker(last: Double, key: MarketKey = btc) =

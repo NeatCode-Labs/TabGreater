@@ -4,7 +4,6 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.neatcode.tabgreater.core.data.flow.observeEach
-import com.neatcode.tabgreater.core.data.flow.throttleLatest
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.data.repo.Sparkline
 import com.neatcode.tabgreater.core.data.repo.SparklineRepository
@@ -124,15 +123,18 @@ class WatchlistViewModel(
         .map { keys -> if (keys.isEmpty()) emptyMap() else marketRepository.getMarkets(keys) }
         .catch { e -> Log.w(TAG, "market lookup failed", e); emit(emptyMap()) }
 
-    // The sockets keep running at full speed; `throttleLatest` only caps how often the grid is
-    // rebuilt and recomposed, which is the "Watchlist refresh rate" setting. It sits inside
-    // flatMapLatest so the very first quote is still painted the moment it lands.
+    // The sockets keep running at full speed; the throttle only caps how often the grid is rebuilt
+    // and recomposed, which is the "Watchlist refresh rate" setting. It sits inside flatMapLatest
+    // so the very first quote is still painted the moment it lands, and `throttleTiles` does the
+    // same for the quote that first replaces the persisted snapshot — the stale prices the grid
+    // shows while the sockets come back after an unlock.
     private val tickersFlow: Flow<Map<MarketKey, Ticker>> = keysFlow
         .flatMapLatest { keys ->
             if (keys.isEmpty()) {
                 flowOf(emptyMap())
             } else {
-                marketDataRepository.observeTickers(keys).throttleLatest { refreshMs.value }
+                marketDataRepository.observeTickers(keys)
+                    .throttleTiles(::redrawsTile) { refreshMs.value }
             }
         }
         .onStart { emit(emptyMap()) }
@@ -148,18 +150,16 @@ class WatchlistViewModel(
      * change restarts the whole set. A broken market drops out of the map instead of failing it.
      *
      * The throttle cannot sit inside a `flatMapLatest` over the keys the way [tickersFlow]'s does
-     * (that is exactly what `observeEach` is here to avoid), so the key set is what opens the gate
-     * instead: a map for different markets is not another sample of the same tiles, and making it
-     * wait would show a freshly opened watchlist with prices but no mini-charts for a whole window.
+     * (that is exactly what `observeEach` is here to avoid), so `throttleTiles` reads the map
+     * itself: the key set opens the gate while the map is still being filled, and each market's
+     * first candle that replaces the cached one opens it once more.
      */
     private val sparklinesFlow: Flow<Map<MarketKey, Sparkline>> = periodFlow
         .flatMapLatest { period ->
             keysFlow.observeEach { key ->
                 sparklineRepository.observeSparkline(key, period)
                     .catch { e -> Log.w(TAG, "sparkline failed for ${key.value}", e) }
-            }.throttleLatest(passThrough = { previous, next -> previous?.keys != next.keys }) {
-                refreshMs.value
-            }
+            }.throttleTiles(::redrawsTile) { refreshMs.value }
         }
         .onStart { emit(emptyMap()) }
         .catch { e -> Log.w(TAG, "sparkline stream failed", e); emit(emptyMap()) }
@@ -332,9 +332,13 @@ class WatchlistViewModel(
 
     private fun buildTiles(inputs: TileInputs, period: SparkPeriod, sort: SortMode): List<TileUiState> {
         val rows = inputs.items.map { item ->
-            val spark = inputs.sparks[item.key]
+            val ticker = inputs.tickers[item.key]
+            // The newest bar is still forming and its close only moves when the exchange pushes a
+            // kline — Kraken sends none until the pair's next trade, MEXC polls once a minute — so
+            // the line follows the live price instead of sitting frozen beside a moving number.
+            val spark = inputs.sparks[item.key]?.withLast(ticker?.last)
             val precision = inputs.markets[item.key]?.pricePrecision ?: DEFAULT_PRECISION
-            val numbers = tileNumbers(period, inputs.tickers[item.key], spark)
+            val numbers = tileNumbers(period, ticker, spark)
             TileRow(
                 item = item,
                 price = numbers.price,

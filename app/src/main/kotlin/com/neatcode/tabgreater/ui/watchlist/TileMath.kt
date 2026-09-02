@@ -104,5 +104,55 @@ private fun windowChange(spark: Sparkline?): Double? {
     return (last - first) / first * 100.0
 }
 
+/**
+ * The window with its newest close pulled up to [price], the live last traded price.
+ *
+ * The bar at the right-hand edge is still forming — its close *is* the last trade — but it only
+ * moves when the exchange pushes a kline, which on Kraken waits for the pair's next trade and on
+ * MEXC for the next 60 s poll, so the mini-chart can sit frozen next to a price that is moving.
+ * [Sparkline.high] and [Sparkline.low] are widened with it, so a tile can never print a price
+ * outside its own range; [Sparkline.firstClose] and [Sparkline.volume] belong to the closed bars
+ * and are left alone.
+ */
+internal fun Sparkline.withLast(price: Double?): Sparkline {
+    if (price == null || isEmpty || lastClose == price) return this
+    val moved = points.copyOf()
+    moved[moved.lastIndex] = price.toFloat()
+    return copy(
+        points = moved,
+        lastClose = price,
+        high = high?.coerceAtLeast(price),
+        low = low?.coerceAtMost(price),
+    )
+}
+
+/**
+ * Whether a new quote would draw a different tile: every field [tileNumbers] reads, and no other.
+ *
+ * Data-class equality cannot stand in for it — it also counts the exchange timestamp, the bid, the
+ * ask and the quote volume, and a Binance ticker stream pushes an update about once a second
+ * whether or not a trade happened, so most ticks change none of the six numbers below.
+ */
+internal fun redrawsTile(shown: Ticker, next: Ticker): Boolean =
+    shown.last != next.last ||
+        shown.changePct24h != next.changePct24h ||
+        shown.open24h != next.open24h ||
+        shown.high24h != next.high24h ||
+        shown.low24h != next.low24h ||
+        shown.volumeBase24h != next.volumeBase24h
+
+/**
+ * Whether a new candle window would draw a different tile: the drawn points and the numbers taken
+ * from them. `Sparkline` equality also counts `updatedAt`, which every REST refresh moves even when
+ * it rewrites the very same candles.
+ */
+internal fun redrawsTile(shown: Sparkline, next: Sparkline): Boolean =
+    !shown.points.contentEquals(next.points) ||
+        shown.firstClose != next.firstClose ||
+        shown.lastClose != next.lastClose ||
+        shown.high != next.high ||
+        shown.low != next.low ||
+        shown.volume != next.volume
+
 /** Percentages always print with two decimals, whatever the market's precision is. */
 private const val CHANGE_DECIMALS = 2

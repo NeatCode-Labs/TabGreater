@@ -5,7 +5,10 @@ import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.Ticker
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TileMathTest {
@@ -178,5 +181,84 @@ class TileMathTest {
         assertNull(absChangeText(1.0, null, 2))
         assertNull(absChangeText(1.0, Double.NaN, 2))
         assertNull(absChangeText(Double.NaN, 1.0, 2))
+    }
+
+    // ── the live last point ──────────────────────────────────────────────────
+
+    @Test
+    fun `the last point follows the live price`() {
+        val moved = spark().withLast(130.0)
+        assertEquals(130f, moved.points.last(), 0f)
+        assertEquals(130.0, moved.lastClose!!, 1e-9)
+        assertEquals(130.0, moved.high!!, 1e-9)
+        assertEquals(80.0, moved.low!!, 1e-9)
+        assertEquals(90.0, moved.firstClose!!, 1e-9)
+        assertEquals(5_000.0, moved.volume!!, 1e-9)
+    }
+
+    @Test
+    fun `a live price inside the window leaves the high and low alone`() {
+        val moved = spark().withLast(105.0)
+        assertEquals(120.0, moved.high!!, 1e-9)
+        assertEquals(80.0, moved.low!!, 1e-9)
+    }
+
+    @Test
+    fun `a live price under the window pulls the low down to it`() {
+        val moved = spark().withLast(70.0)
+        assertEquals(70.0, moved.low!!, 1e-9)
+        assertEquals(120.0, moved.high!!, 1e-9)
+    }
+
+    @Test
+    fun `a window with nothing to move is returned untouched`() {
+        val window = spark()
+        assertSame(window, window.withLast(null))
+        assertSame(window, window.withLast(110.0))
+    }
+
+    @Test
+    fun `an empty window is not given a last point`() {
+        assertSame(Sparkline.EMPTY, Sparkline.EMPTY.withLast(100.0))
+    }
+
+    @Test
+    fun `a period other than 24h measures its change against the live price`() {
+        val numbers = tileNumbers(SparkPeriod.DAYS_7, ticker(last = 130.0), spark().withLast(130.0))
+        assertEquals((130.0 - 90.0) / 90.0 * 100.0, numbers.changePct!!, 1e-9)
+    }
+
+    // ── what counts as a redraw ──────────────────────────────────────────────
+
+    @Test
+    fun `only the numbers a tile draws make a quote a redraw`() {
+        val shown = ticker(
+            open24h = 100.0,
+            high24h = 120.0,
+            low24h = 80.0,
+            volumeBase24h = 10.0,
+            changePct24h = 1.0,
+        )
+        // The fields a tile never prints, which most ticks are made of.
+        val invisible = shown.copy(timestamp = 9_000L, bid = 1.0, ask = 2.0, volumeQuote24h = 3.0)
+        assertFalse(redrawsTile(shown, invisible))
+        assertTrue(redrawsTile(shown, shown.copy(last = 101.0)))
+        assertTrue(redrawsTile(shown, shown.copy(changePct24h = 2.0)))
+        assertTrue(redrawsTile(shown, shown.copy(open24h = 101.0)))
+        assertTrue(redrawsTile(shown, shown.copy(high24h = 121.0)))
+        assertTrue(redrawsTile(shown, shown.copy(low24h = 79.0)))
+        assertTrue(redrawsTile(shown, shown.copy(volumeBase24h = 11.0)))
+    }
+
+    @Test
+    fun `a window rewritten with the same candles is not a redraw`() {
+        val shown = spark()
+        assertFalse(redrawsTile(shown, shown.copy(updatedAt = 9_000L)))
+        assertTrue(redrawsTile(shown, shown.copy(points = floatArrayOf(90f, 100f, 111f))))
+        assertTrue(redrawsTile(shown, spark(first = 91.0)))
+        assertTrue(redrawsTile(shown, spark(last = 111.0)))
+        assertTrue(redrawsTile(shown, spark(high = 121.0)))
+        assertTrue(redrawsTile(shown, spark(low = 79.0)))
+        assertTrue(redrawsTile(shown, spark(volume = 6_000.0)))
     }
 }
