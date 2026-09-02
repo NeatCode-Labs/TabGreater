@@ -36,11 +36,7 @@ data class WidgetConfig(
     val showSparkline: Boolean = true,
 ) {
     /** The background as a single ARGB int, [alpha] folded into the alpha channel. */
-    val blendedArgb: Int
-        get() {
-            val a = (alpha.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
-            return (a shl 24) or (backgroundArgb.toInt() and 0x00FFFFFF)
-        }
+    val blendedArgb: Int get() = blend(backgroundArgb, alpha)
 
     companion object {
         /** Background swatches offered by the configuration screen, before the accent palette. */
@@ -49,6 +45,16 @@ data class WidgetConfig(
             0xFF000000L, // black
             0xFF0F1A24L, // navy
         ) + TGColors.ACCENT_PALETTE
+
+        /**
+         * [blendedArgb] for a colour and a transparency that are not (yet) a stored configuration —
+         * the sheet's live preview and [WidgetPalette] work on the same fold the widget is drawn
+         * with, so the two can never disagree about what the background is.
+         */
+        fun blend(backgroundArgb: Long, alpha: Float): Int {
+            val a = (alpha.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+            return (a shl 24) or (backgroundArgb.toInt() and 0x00FFFFFF)
+        }
     }
 }
 

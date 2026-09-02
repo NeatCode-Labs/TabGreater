@@ -27,10 +27,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
@@ -70,6 +76,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neatcode.tabgreater.core.data.APP_SCOPE
+import com.neatcode.tabgreater.core.data.popular.DEFAULT_POPULAR_PAIRS
+import com.neatcode.tabgreater.core.data.popular.PopularPairsRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.data.repo.SparklineRepository
 import com.neatcode.tabgreater.core.live.LiveTickerLauncher
@@ -96,6 +104,7 @@ import java.util.Locale
 class WidgetConfigActivity : ComponentActivity() {
 
     private val markets: MarketRepository by inject()
+    private val popular: PopularPairsRepository by inject()
     private val configs: WidgetConfigStore by inject()
     private val refresher: GlanceWidgetRefresher by inject()
     private val marketData: MarketDataRepository by inject()
@@ -126,6 +135,7 @@ class WidgetConfigActivity : ComponentActivity() {
                     loadInitial = { configs.get(appWidgetId) },
                     refreshCatalogue = { markets.refreshAll() },
                     search = { query -> markets.search(query, SEARCH_LIMIT) },
+                    loadPopularPairs = { popular.pairs() },
                     loadPreview = { key -> previewModel(key) },
                     onSave = { config -> save(appWidgetId, config) },
                     onCancel = { finish() },
@@ -175,8 +185,9 @@ class WidgetConfigActivity : ComponentActivity() {
 }
 
 /**
- * Every field the user can change is `rememberSaveable`: the activity has no `configChanges`, so
- * rotation, a font-size change or a process kill in the picker used to reset the whole screen to
+ * Every field the user can change is `rememberSaveable` (the query through `rememberTextFieldState`,
+ * which saves itself): the activity has no `configChanges`, so rotation, a font-size change or a
+ * process kill in the picker used to reset the whole screen to
  * "Pick a pair" (finding 15). [MarketKey] is a value class over `String` and not Parcelable, so
  * the pair travels as its raw key. `seeded` is saved too — otherwise the reconfigure path would
  * re-apply the persisted configuration on top of the restored edits.
@@ -186,6 +197,7 @@ private fun WidgetConfigScreen(
     loadInitial: suspend () -> WidgetConfig?,
     refreshCatalogue: suspend () -> Unit,
     search: suspend (String) -> List<Market>,
+    loadPopularPairs: suspend () -> List<String>,
     loadPreview: suspend (MarketKey) -> WidgetRenderModel?,
     onSave: (WidgetConfig) -> Unit,
     onCancel: () -> Unit,
@@ -194,11 +206,17 @@ private fun WidgetConfigScreen(
     var background by rememberSaveable { mutableLongStateOf(TGColors.SURFACE) }
     var alpha by rememberSaveable { mutableFloatStateOf(1f) }
     var showSparkline by rememberSaveable { mutableStateOf(true) }
-    var query by rememberSaveable { mutableStateOf("") }
+    // The query is a TextFieldState rather than a String so that writing into the field from the
+    // outside — a chip tap — can place the caret after the pair it typed; the value overload keeps
+    // whatever caret the user last had, which in an untouched field is index 0.
+    val queryState = rememberTextFieldState()
+    val query = queryState.text.toString()
     var seeded by rememberSaveable { mutableStateOf(false) }
     var results by remember { mutableStateOf(emptyList<Market>()) }
     var loading by remember { mutableStateOf(true) }
     var preview by remember { mutableStateOf<WidgetRenderModel?>(null) }
+    // Starts on the built-in list so the chip row never flashes empty, exactly as "+ Add pair" does.
+    var popularPairs by remember { mutableStateOf(DEFAULT_POPULAR_PAIRS) }
 
     val selected = selectedKey?.let { MarketKey.parseOrNull(it) }
 
@@ -214,6 +232,13 @@ private fun WidgetConfigScreen(
         }
         refreshCatalogue()
         loading = false
+    }
+
+    // Opening this sheet is the only thing that may refresh the ranking, and the repository still
+    // lets at most one call per 24 h through to CoinGecko. Kept off the effect above so a slow
+    // answer never holds back the instrument catalogue.
+    LaunchedEffect(Unit) {
+        popularPairs = loadPopularPairs()
     }
 
     LaunchedEffect(selected) {
@@ -255,10 +280,18 @@ private fun WidgetConfigScreen(
         Spacer(Modifier.height(12.dp))
 
         SearchField(
-            query = query,
-            onQueryChange = { query = it },
+            state = queryState,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+
+        // Quick-add chips only make sense as a starting point; once the user types they are noise.
+        if (query.isBlank()) {
+            PopularPairsRow(
+                pairs = popularPairs,
+                onPairClick = { pair -> queryState.setTextAndPlaceCursorAtEnd(pair) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (query.isBlank()) {
@@ -277,7 +310,7 @@ private fun WidgetConfigScreen(
                     selected = selected,
                     onPick = { market ->
                         selectedKey = market.key.value
-                        query = ""
+                        queryState.clearText()
                     },
                 )
             }
@@ -313,7 +346,7 @@ private fun WidgetPreview(
     showSparkline: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val fill = Color(backgroundArgb.toInt()).copy(alpha = alpha.coerceIn(0f, 1f))
+    val blended = WidgetConfig.blend(backgroundArgb, alpha)
     val live = data?.takeIf { it.hasData && it.marketKey == key }
     val sample = PreviewData(
         monogram = key?.exchange?.monogram,
@@ -327,7 +360,10 @@ private fun WidgetPreview(
         ),
         points = live?.spark?.takeIf { it.size >= 2 }?.toFloatArray() ?: SAMPLE_SPARK,
         showSparkline = showSparkline,
-        fill = fill,
+        fill = Color(blended),
+        // The contrast-aware foreground the widget itself will draw with, so the sheet shows the
+        // black-on-yellow the home screen is about to get instead of the white it never gets.
+        scheme = WidgetPalette.of(blended),
     )
     Column(modifier) {
         Text(stringResource(R.string.widget_config_preview), style = TWType.sectionHeader)
@@ -360,7 +396,13 @@ private class PreviewData(
     val points: FloatArray,
     val showSparkline: Boolean,
     val fill: Color,
-)
+    val scheme: WidgetScheme,
+) {
+    val primary = Color(scheme.primary)
+    val tertiary = Color(scheme.tertiary)
+    val badge = Color(scheme.badge)
+    val trend = Color(if (up) scheme.up else scheme.down)
+}
 
 /**
  * One preview slot, run through exactly the same [widgetPlan] the launcher's widget runs through,
@@ -371,13 +413,13 @@ private class PreviewData(
  * so the sheet and the home screen agree down to the corner radius.
  */
 @Composable
-private fun PreviewBadge(monogram: String, sideDp: Float) {
+private fun PreviewBadge(monogram: String, sideDp: Float, tint: Color) {
     Box(
         modifier = Modifier
             .size(sideDp.dp)
             .border(
                 width = ExchangeBadgeRenderer.BORDER_DP.dp,
-                color = TW.TextTertiary,
+                color = tint,
                 shape = RoundedCornerShape((sideDp * ExchangeBadgeRenderer.CORNER_FRACTION).dp),
             ),
         contentAlignment = Alignment.Center,
@@ -385,6 +427,7 @@ private fun PreviewBadge(monogram: String, sideDp: Float) {
         Text(
             text = monogram,
             style = TWType.exchange.copy(
+                color = tint,
                 fontSize = (sideDp * ExchangeBadgeRenderer.FONT_FRACTION).sp,
                 lineHeight = (sideDp * ExchangeBadgeRenderer.FONT_FRACTION).sp,
                 fontWeight = FontWeight.Medium,
@@ -425,32 +468,32 @@ private fun PreviewWidget(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = data.pair,
-                    style = previewPair(plan.pairSp),
+                    style = previewPair(plan.pairSp, data.primary),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (plan.showBadge && data.monogram != null) {
                     Spacer(Modifier.width(plan.headerGapDp.dp))
-                    PreviewBadge(data.monogram, plan.badgeDp)
+                    PreviewBadge(data.monogram, plan.badgeDp, data.badge)
                 }
             }
             if (plan.hasBand) {
                 Spacer(Modifier.height(plan.bandGapDp.dp))
-                PreviewSparkline(data.points, data.up, Modifier.fillMaxWidth().weight(1f))
+                PreviewSparkline(data.points, data.trend, Modifier.fillMaxWidth().weight(1f))
                 Spacer(Modifier.height(plan.bandGapDp.dp))
             } else {
                 Spacer(Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                Text(data.price, style = previewPrice(plan.priceSp), maxLines = 1)
+                Text(data.price, style = previewPrice(plan.priceSp, data.primary), maxLines = 1)
                 Spacer(Modifier.width(plan.priceGapDp.dp))
                 Spacer(Modifier.weight(1f))
-                Text(data.change, style = previewChange(plan.changeSp, data.up), maxLines = 1)
+                Text(data.change, style = previewChange(plan.changeSp, data.trend), maxLines = 1)
             }
             if (plan.showMeta) {
                 Text(
                     text = data.updated,
-                    style = previewMeta(plan.metaSp),
+                    style = previewMeta(plan.metaSp, data.tertiary),
                     maxLines = 1,
                     textAlign = TextAlign.End,
                     modifier = Modifier.fillMaxWidth(),
@@ -463,11 +506,10 @@ private fun PreviewWidget(
 /**
  * The 24 h shape in the preview — the pair's cached closes once they are known, the synthetic
  * sample before that — drawn through the same [SparklinePath] maths the widget bitmap uses, at the
- * same [sparkStrokePx] stroke.
+ * same [sparkStrokePx] stroke and in the same [WidgetPalette] colour.
  */
 @Composable
-private fun PreviewSparkline(values: FloatArray, up: Boolean, modifier: Modifier = Modifier) {
-    val tint = if (up) TW.Up else TW.Down
+private fun PreviewSparkline(values: FloatArray, tint: Color, modifier: Modifier = Modifier) {
     Canvas(modifier) {
         val stroke = sparkStrokePx(density)
         val points = SparklinePath.points(values, size.width, size.height, stroke)
@@ -521,7 +563,7 @@ private fun Modifier.checkerboard(): Modifier = drawBehind {
 // ---- Search --------------------------------------------------------------------------------
 
 @Composable
-private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun SearchField(state: TextFieldState, modifier: Modifier = Modifier) {
     // BasicTextField exposes no label of its own, so the hint is published as the field's name for
     // TalkBack and for uiautomator (F5-4).
     val label = stringResource(R.string.widget_config_search_label)
@@ -536,17 +578,61 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        if (query.isEmpty()) {
+        if (state.text.isEmpty()) {
             Text(stringResource(R.string.widget_config_search_hint), style = TWType.subtitle)
         }
         BasicTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            singleLine = true,
+            state = state,
+            lineLimits = TextFieldLineLimits.SingleLine,
             textStyle = TWType.searchInput,
             cursorBrush = SolidColor(TW.Accent),
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * Quick-add chips under the search field: the top coins by market cap against USDT, the same row
+ * the app's "+ Add pair" screen offers. Tapping one *types* the pair instead of picking a market,
+ * so [ResultsPane] then lists it on every exchange and the user chooses which one this widget
+ * follows — a widget is one pair on one exchange, and the chip cannot know which.
+ *
+ * The ranking comes from CoinGecko; its credit lives on the About screen, in the README and in
+ * NOTICE rather than in a 36 dp row.
+ */
+@Composable
+private fun PopularPairsRow(pairs: List<String>, onPairClick: (String) -> Unit, modifier: Modifier = Modifier) {
+    if (pairs.isEmpty()) return
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(TGDimens.CHIP_ROW_DP.dp)
+            .horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        pairs.forEachIndexed { index, pair ->
+            if (index > 0) Spacer(Modifier.width(8.dp))
+            PopularPairChip(pair = pair, onClick = { onPairClick(pair) })
+        }
+    }
+}
+
+/** A chip says its pair, but not what tapping it does, so it carries the action as its name (F5-4). */
+@Composable
+private fun PopularPairChip(pair: String, onClick: () -> Unit) {
+    val label = stringResource(R.string.widget_config_popular_chip, pair)
+    Row(
+        modifier = Modifier
+            .height(TGDimens.CHIP_H_DP.dp)
+            .clip(ChipShape)
+            .background(TW.ChipFill)
+            .border(1.dp, TW.Outline, ChipShape)
+            .semantics { contentDescription = label }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = pair, style = TWType.subtitle, maxLines = 1)
     }
 }
 
@@ -715,6 +801,9 @@ private fun SaveBar(enabled: Boolean, onCancel: () -> Unit, onSave: () -> Unit) 
 /** `#RRGGBB` of an opaque swatch, the shortest thing a screen reader can say about a colour. */
 private fun hexOf(argb: Long): String = String.format(Locale.ROOT, "#%06X", argb and 0xFFFFFF)
 
+/** The quick-add chips' pill, the shape the app's "+ Add pair" row uses. */
+private val ChipShape = RoundedCornerShape(percent = 50)
+
 private const val SEARCH_DEBOUNCE_MS = 200L
 private const val SAMPLE_PRICE = "65,609.70"
 private const val SAMPLE_CHANGE = "+6.52%"
@@ -733,15 +822,17 @@ private const val PREVIEW_TALL_H_DP = 150f
  * [LINE_FACTOR] — the config sheet draws with `includeFontPadding = false` while Glance cannot —
  * so the bands land at the same heights on both sides.
  */
-private fun previewPair(sp: Float) = TWType.pair.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp)
+private fun previewPair(sp: Float, color: Color) =
+    TWType.pair.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp, color = color)
 
-private fun previewMeta(sp: Float) = TWType.meta.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp)
+private fun previewMeta(sp: Float, color: Color) =
+    TWType.meta.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp, color = color)
 
-private fun previewPrice(sp: Float) =
-    TWType.price.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp)
+private fun previewPrice(sp: Float, color: Color) =
+    TWType.price.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp, color = color)
 
-private fun previewChange(sp: Float, up: Boolean) =
-    TWType.change.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp, color = if (up) TW.Up else TW.Down)
+private fun previewChange(sp: Float, color: Color) =
+    TWType.change.copy(fontSize = sp.sp, lineHeight = (sp * LINE_FACTOR).sp, color = color)
 
 private val CHECKER_DARK = Color(0xFF1A1B1B)
 private val CHECKER_LIGHT = Color(0xFF242525)

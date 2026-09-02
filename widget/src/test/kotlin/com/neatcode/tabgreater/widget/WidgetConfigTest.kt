@@ -43,6 +43,18 @@ class WidgetConfigTest {
     }
 
     @Test
+    fun `the sheet's preview folds a colour and a slider position exactly as a stored config does`() {
+        for (background in WidgetConfig.BACKGROUNDS) {
+            for (alpha in listOf(1f, 0.5f, 0f)) {
+                assertEquals(
+                    WidgetConfig(KEY, background, alpha).blendedArgb,
+                    WidgetConfig.blend(background, alpha),
+                )
+            }
+        }
+    }
+
+    @Test
     fun `background palette starts with the tile surface and includes the accent colours`() {
         assertEquals(TGColors.SURFACE, WidgetConfig.BACKGROUNDS.first())
         assertTrue(WidgetConfig.BACKGROUNDS.containsAll(TGColors.ACCENT_PALETTE))

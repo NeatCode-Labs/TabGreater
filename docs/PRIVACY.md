@@ -10,7 +10,7 @@ Nothing. The app has no server, no account, no analytics, no crash reporting and
 
 TabGreater fetches prices and candles **directly** from the public market-data APIs of the exchanges you use (Binance, Gate.io, Kraken, KuCoin, MEXC). Each of those requests carries, as every internet request does, your IP address, and it names the trading pairs you are watching. The exchanges receive and process that information under their own terms of service and privacy policies; NeatCode Labs has no access to it and no control over it. All connections use HTTPS / WSS.
 
-The "popular pairs" shortcuts on the add-pair screen come from CoinGecko's public market-cap ranking (https://www.coingecko.com): the app asks for that list at most once a day, and that request, like any other, carries your IP address. Nothing else leaves the device. The chart runs in a WebView that loads only files bundled inside the app.
+The "popular pairs" shortcuts on the add-pair screen and in the widget setup come from CoinGecko's public market-cap ranking (https://www.coingecko.com): the app asks for that list at most once a day, and that request, like any other, carries your IP address. Nothing else leaves the device. The chart runs in a WebView that loads only files bundled inside the app.
 
 ## What stays on your device
 
