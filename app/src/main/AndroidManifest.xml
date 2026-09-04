@@ -30,11 +30,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- F4: tabgreater://chart/{key} opens the chart directly (the widgets fire it, F5). -->
+            <!--
+                F4: tabgreater://chart/{key} opens that market's chart as the only back-stack
+                entry, so Back returns to the home screen. Only this app's widgets fire it, with
+                `setPackage`, hence no BROWSABLE: a browser must not be able to steer the app.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:host="chart"
                     android:scheme="tabgreater" />
