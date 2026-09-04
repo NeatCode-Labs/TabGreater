@@ -1,0 +1,5 @@
+Widget taps go straight to the chart.
+
+• Tapping a home-screen widget opens that pair's chart directly, without passing through the watchlist
+• Back (and the toolbar arrow) from a widget-opened chart returns to the home screen instead of the app
+• Opening the app from its icon still lands on the watchlist; navigation inside the app is unchanged
