@@ -1,0 +1,3 @@
+Widget taps open the chart every time.
+
+• Tapping a home-screen widget after the phone had been asleep for a while could open the watchlist instead of the pair's chart — it now opens the chart, whether the app was closed, running, or restarted in the background
