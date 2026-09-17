@@ -25,10 +25,11 @@ import com.neatcode.tabgreater.ui.watchlist.WatchlistScreen
  * `WatchlistsRoute`, `SettingsRoute`, `AboutRoute`, `SearchRoute(watchlistId)` and
  * `ChartRoute(key)`.
  *
- * [startDestination] is `WatchlistsRoute` for an ordinary launch and `ChartRoute(key)` when the
- * activity was started by a widget tap — `TabGreaterRoot` decides. No destination declares a deep
- * link, so the graph never builds a synthetic back stack of its own and the widget's chart stays
- * the single entry it was opened as.
+ * [startDestination] is `WatchlistsRoute` for an ordinary launch and `ChartRoute(key)` when a
+ * widget tap is the launch waiting to be acted on — `TabGreaterRoot` decides. No destination
+ * declares a deep link, so the graph never builds a synthetic back stack of its own (declaring one
+ * would also let `NavController` build it from `activity.intent` whenever the graph starts empty)
+ * and the widget's chart stays the single entry it was opened as.
  */
 @Composable
 fun TabGreaterNavHost(

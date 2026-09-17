@@ -3,6 +3,9 @@ package com.neatcode.tabgreater.ui.navigation
 import com.neatcode.tabgreater.core.model.MarketKey
 import java.net.URLDecoder
 
+/** `true` for anything under `tabgreater://chart/`, whether or not it names a usable market. */
+fun isChartLink(uri: String?): Boolean = uri?.startsWith("$CHART_DEEP_LINK_BASE/") == true
+
 /**
  * The market behind a `tabgreater://chart/{key}` link, or `null` for anything else.
  *
@@ -16,9 +19,8 @@ import java.net.URLDecoder
  * tests can exercise without an Android `Uri`.
  */
 fun chartDeepLinkKey(uri: String?): MarketKey? {
-    val prefix = "$CHART_DEEP_LINK_BASE/"
-    if (uri == null || !uri.startsWith(prefix)) return null
-    val segment = uri.substring(prefix.length)
+    if (uri == null || !isChartLink(uri)) return null
+    val segment = uri.substring(CHART_DEEP_LINK_BASE.length + 1)
     // The key is encoded whole (`binance%3ABTC%2FEUR`), so a bare '/', '?' or '#' after the host
     // can only come from a link this app never sends.
     if (segment.isEmpty() || segment.any { it == '/' || it == '?' || it == '#' }) return null
