@@ -1,0 +1,6 @@
+Drawing tools on the chart.
+
+• 30 drawing tools from the new pencil button: trend lines, rays, horizontal and vertical lines, channels, Fibonacci tools, Gann box, shapes, brush, wave patterns, text and tags
+• Drawings are kept per market and survive timeframe changes and app restarts
+• Tap a drawing to select it, then drag to move it; lock or delete it from the strip on the chart
+• Magnet snaps points to candle prices; drawings can be hidden or all deleted from the Draw sheet
