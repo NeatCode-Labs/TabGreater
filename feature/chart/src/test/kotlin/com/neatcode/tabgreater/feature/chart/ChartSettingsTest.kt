@@ -17,8 +17,24 @@ class ChartSettingsTest {
                 IndicatorCatalogue.find("VOL")!!,
                 IndicatorCatalogue.find("MACD")!!,
             ),
+            magnetMode = MagnetMode.STRONG,
+            drawingsVisible = false,
         )
         assertEquals(settings, ChartSettingsCodec.decode(ChartSettingsCodec.encode(settings)))
+    }
+
+    @Test
+    fun `drawings are shown with a weak magnet by default`() {
+        assertEquals(MagnetMode.WEAK, ChartSettings.DEFAULT.magnetMode)
+        assertEquals(true, ChartSettings.DEFAULT.drawingsVisible)
+    }
+
+    @Test
+    fun `settings written before the drawing options decode with their defaults`() {
+        val decoded = ChartSettingsCodec.decode("""{"timeframe":"M5","candleType":"AREA","logScale":true}""")
+        assertEquals(Timeframe.M5, decoded.timeframe)
+        assertEquals(MagnetMode.WEAK, decoded.magnetMode)
+        assertEquals(true, decoded.drawingsVisible)
     }
 
     @Test

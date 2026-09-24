@@ -280,3 +280,21 @@ interface TickerSnapshotDao {
     @Query("DELETE FROM ticker_snapshots WHERE market_key IN (:keys)")
     suspend fun deleteByKeys(keys: List<String>)
 }
+
+@Dao
+interface ChartDrawingDao {
+    @Query("SELECT * FROM chart_drawings WHERE market_key = :key")
+    suspend fun get(key: String): ChartDrawingEntity?
+
+    @Upsert
+    suspend fun upsert(entity: ChartDrawingEntity)
+
+    @Query("DELETE FROM chart_drawings WHERE market_key = :key")
+    suspend fun delete(key: String)
+
+    @Query("DELETE FROM chart_drawings")
+    suspend fun deleteAll()
+
+    @Query("SELECT COUNT(*) FROM chart_drawings")
+    suspend fun count(): Int
+}

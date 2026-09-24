@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -22,9 +23,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.Timeframe
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlin.coroutines.resume
 
 /**
  * The KLineChart canvas: the process-wide cached WebView, driven entirely through the `tg.*` API.
@@ -34,6 +38,11 @@ import kotlinx.serialization.builtins.serializer
  *.
  *
  * @param autoScaleTick bump this to run the "auto" action (undo a manual y-axis drag).
+ * @param magnetMode snapping of drawing points; applied to new and existing drawings.
+ * @param drawingsVisible `false` hides every user drawing without deleting it.
+ * @param drawingCommand the newest one-shot drawing instruction, or `null`. It is carried out
+ *   once the chart has booted, then reported through [onDrawingCommandHandled] so the owner can
+ *   clear it — a command must never run a second time on a rebuilt WebView.
  * @param debuggable enables WebView contents debugging; pass `BuildConfig.DEBUG`.
  */
 @Composable
@@ -46,6 +55,10 @@ fun ChartView(
     autoScaleTick: Int,
     bridge: ChartBridge,
     modifier: Modifier = Modifier,
+    magnetMode: MagnetMode = MagnetMode.WEAK,
+    drawingsVisible: Boolean = true,
+    drawingCommand: DrawingCommand? = null,
+    onDrawingCommandHandled: (DrawingCommand) -> Unit = {},
     debuggable: Boolean = false,
 ) {
     // A renderer crash (or a trim while the screen was away) destroys the cached WebView; the
@@ -61,6 +74,10 @@ fun ChartView(
             autoScaleTick = autoScaleTick,
             bridge = bridge,
             modifier = modifier,
+            magnetMode = magnetMode,
+            drawingsVisible = drawingsVisible,
+            drawingCommand = drawingCommand,
+            onDrawingCommandHandled = onDrawingCommandHandled,
             debuggable = debuggable,
         )
     }
@@ -77,6 +94,10 @@ private fun ChartCanvas(
     autoScaleTick: Int,
     bridge: ChartBridge,
     modifier: Modifier,
+    magnetMode: MagnetMode,
+    drawingsVisible: Boolean,
+    drawingCommand: DrawingCommand?,
+    onDrawingCommandHandled: (DrawingCommand) -> Unit,
     debuggable: Boolean,
 ) {
     val context = LocalContext.current
@@ -85,6 +106,8 @@ private fun ChartCanvas(
     val hostToken = remember { bridge.attachHost() }
     var booted by remember { mutableStateOf(false) }
     var size by remember { mutableStateOf(IntSize.Zero) }
+    // Read by the market effect without restarting it: restored drawings take the current magnet.
+    val currentMagnet by rememberUpdatedState(magnetMode)
 
     AndroidView(
         factory = { webView },
@@ -106,7 +129,12 @@ private fun ChartCanvas(
         val period = ChartProtocol.json.encodeToString(ChartPeriod.serializer(), ChartPeriods.of(timeframe))
         // KLineChart renders `{span:1,type:'minute'}` as a bare "1"; the legend gets our own label.
         val label = ChartProtocol.json.encodeToString(String.serializer(), timeframe.label)
-        webView.eval("tg.setMarket($symbol,$period,$label)")
+        bridge.onMarketChanged()
+        // Awaited, so a drawing set the page flushes for the outgoing series while it swaps has
+        // reached the bridge before this market's drawings are read back.
+        webView.evalAwait("tg.setMarket($symbol,$period,$label)")
+        // The page holds the set until this market's first bars are on the canvas.
+        webView.eval("window.tg&&tg.setDrawings(${bridge.drawingsPayloadFor(market, currentMagnet)})")
         booted = true
     }
     LaunchedEffect(indicators, booted) {
@@ -122,6 +150,20 @@ private fun ChartCanvas(
     }
     LaunchedEffect(autoScaleTick) {
         if (booted && autoScaleTick > 0) webView.eval("tg.resetAutoScale()")
+    }
+    LaunchedEffect(magnetMode, booted) {
+        if (booted) webView.eval("window.tg&&tg.setMagnet(${jsString(magnetMode.jsValue)})")
+    }
+    LaunchedEffect(drawingsVisible, booted) {
+        if (booted) webView.eval("window.tg&&tg.setDrawingsVisible($drawingsVisible)")
+    }
+    // A command waits for the boot, runs once, and is handed back so its owner can drop it; a
+    // screen that has already been replaced by a newer chart leaves the shared WebView alone.
+    LaunchedEffect(drawingCommand, booted) {
+        val command = drawingCommand ?: return@LaunchedEffect
+        if (!booted || !bridge.isCurrentHost(hostToken)) return@LaunchedEffect
+        webView.eval(command.action.toJs())
+        onDrawingCommandHandled(command)
     }
     // KLineChart resizes itself through a ResizeObserver; this is the belt-and-braces call for
     // the fullscreen/rotation swap, where the canvas would otherwise keep the old bounds.
@@ -182,3 +224,17 @@ private data class JsIndicatorSpec(
 }
 
 private fun WebView.eval(js: String) = post { evaluateJavascript(js, null) }
+
+/**
+ * [eval] that suspends until the page has run [js]. Bounded: a WebView torn down mid-call never
+ * answers, and the caller must not hang on it.
+ */
+private suspend fun WebView.evalAwait(js: String) {
+    withTimeoutOrNull(EVAL_TIMEOUT_MS) {
+        suspendCancellableCoroutine { cont ->
+            post { evaluateJavascript(js) { if (cont.isActive) cont.resume(Unit) } }
+        }
+    }
+}
+
+private const val EVAL_TIMEOUT_MS = 2_000L

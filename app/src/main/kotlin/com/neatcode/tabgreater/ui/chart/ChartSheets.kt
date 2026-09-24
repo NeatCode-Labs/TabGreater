@@ -5,15 +5,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import com.neatcode.tabgreater.R
 import com.neatcode.tabgreater.feature.chart.CandleType
+import com.neatcode.tabgreater.feature.chart.DrawingState
 import com.neatcode.tabgreater.feature.chart.IndicatorCatalogue
 import com.neatcode.tabgreater.feature.chart.IndicatorSpec
+import com.neatcode.tabgreater.feature.chart.MagnetMode
 import com.neatcode.tabgreater.ui.components.TGBottomSheet
 import com.neatcode.tabgreater.ui.components.TGSheetOption
 
 /** Which bottom sheet the chart toolbar has open. */
-enum class ChartSheet { CANDLE_TYPE, INDICATORS }
+enum class ChartSheet { CANDLE_TYPE, INDICATORS, DRAWING }
 
-/** The chart's two bottom sheets; nothing is drawn while [sheet] is `null`. */
+/** The chart's bottom sheets; nothing is drawn while [sheet] is `null`. */
 @Composable
 fun ChartSheets(
     sheet: ChartSheet?,
@@ -21,6 +23,11 @@ fun ChartSheets(
     onDismiss: () -> Unit,
     onCandleType: (CandleType) -> Unit,
     onToggleIndicator: (String) -> Unit,
+    drawingState: DrawingState = DrawingState.IDLE,
+    onPickTool: (String) -> Unit = {},
+    onMagnetMode: (MagnetMode) -> Unit = {},
+    onDrawingsVisible: (Boolean) -> Unit = {},
+    onDeleteAllDrawings: () -> Unit = {},
     immersive: Boolean = false,
 ) {
     when (sheet) {
@@ -37,6 +44,23 @@ fun ChartSheets(
         ChartSheet.INDICATORS -> IndicatorsSheet(
             selected = state.settings.indicators,
             onToggle = onToggleIndicator,
+            onDismiss = onDismiss,
+            immersive = immersive,
+        )
+        ChartSheet.DRAWING -> DrawingSheet(
+            drawingState = drawingState,
+            magnetMode = state.settings.magnetMode,
+            drawingsVisible = state.settings.drawingsVisible,
+            onPickTool = { name ->
+                onDismiss()
+                onPickTool(name)
+            },
+            onMagnetMode = onMagnetMode,
+            onDrawingsVisible = onDrawingsVisible,
+            onDeleteAll = {
+                onDismiss()
+                onDeleteAllDrawings()
+            },
             onDismiss = onDismiss,
             immersive = immersive,
         )

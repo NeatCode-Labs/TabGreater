@@ -320,6 +320,43 @@ object TGIcons {
         }
     }
 
+    // ---- Chart drawing tools ------------------------------------------------------------------
+
+    /** A pencil: opens the "Draw" sheet from the chart toolbar. */
+    val Draw: ImageVector by lazy {
+        strokeVector("tt_draw", width = 1.8f) {
+            moveTo(4f, 20f)
+            lineTo(5f, 15.5f)
+            lineTo(15.5f, 5f)
+            lineTo(19f, 8.5f)
+            lineTo(8.5f, 19f)
+            close()
+            moveTo(13f, 7.5f)
+            lineTo(16.5f, 11f)
+        }
+    }
+
+    /** A closed padlock: the selected drawing is locked. */
+    val Lock: ImageVector by lazy {
+        strokeVector("tt_lock", width = 1.8f) {
+            padlockBody()
+            moveTo(8f, 11f)
+            lineTo(8f, 8f)
+            arcTo(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = true, x1 = 16f, y1 = 8f)
+            lineTo(16f, 11f)
+        }
+    }
+
+    /** An open padlock: the selected drawing can be moved. */
+    val LockOpen: ImageVector by lazy {
+        strokeVector("tt_lock_open", width = 1.8f) {
+            padlockBody()
+            moveTo(8f, 11f)
+            lineTo(8f, 7f)
+            arcTo(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = true, x1 = 16f, y1 = 7f)
+        }
+    }
+
     /** Glyph for the tile-size chip and the Tickers Appearance sheet. */
     fun forTileSize(size: com.neatcode.tabgreater.core.model.TileSize): ImageVector = when (size) {
         com.neatcode.tabgreater.core.model.TileSize.SMALL -> GridSmall
@@ -341,6 +378,22 @@ object TGIcons {
         lineTo(2.8f, 9.9f)
         lineTo(9.15f, 9.0f)
         close()
+    }
+
+    /** The rounded body and keyhole shared by [Lock] and [LockOpen]. */
+    private fun androidx.compose.ui.graphics.vector.PathBuilder.padlockBody() {
+        moveTo(6.5f, 11f)
+        lineTo(17.5f, 11f)
+        quadTo(19f, 11f, 19f, 12.5f)
+        lineTo(19f, 18.5f)
+        quadTo(19f, 20f, 17.5f, 20f)
+        lineTo(6.5f, 20f)
+        quadTo(5f, 20f, 5f, 18.5f)
+        lineTo(5f, 12.5f)
+        quadTo(5f, 11f, 6.5f, 11f)
+        close()
+        moveTo(12f, 14.5f)
+        lineTo(12f, 16.5f)
     }
 
     /** A single filled path on the 24×24 Material grid. */

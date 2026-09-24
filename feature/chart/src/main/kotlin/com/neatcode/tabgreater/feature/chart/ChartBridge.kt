@@ -6,31 +6,39 @@ import android.os.SystemClock
 import android.util.Log
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
+import com.neatcode.tabgreater.core.data.repo.ChartDrawingRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.Market
+import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.concurrent.ConcurrentHashMap
 
 /** Logcat tag of every chart diagnostic, native and JS alike (`adb logcat -s chart`). */
 const val CHART_LOG_TAG: String = "chart"
 
 /**
  * The Kotlin half of the WebView bridge: it answers `chart.js`'s `getBars` /
- * `subscribeBar` / `unsubscribeBar` RPCs and forwards its `log` / `ready` notices to logcat.
+ * `subscribeBar` / `unsubscribeBar` RPCs, forwards its `log` / `ready` notices to logcat, persists
+ * the user's drawings (`drawingsChanged`) and mirrors the drawing layer's state (`drawingState`).
  *
  * One instance per process (it owns the live subscription of the single cached WebView).
  * Adapters come from [ExchangeRegistry] and the market — with its native symbol and price
@@ -40,6 +48,7 @@ class ChartBridge(
     private val scope: CoroutineScope,
     private val registry: ExchangeRegistry,
     private val markets: MarketRepository,
+    private val drawings: ChartDrawingRepository,
 ) {
 
     /** Set by [ChartWebViewCache] when the WebView is created; live bars are pushed into it. */
@@ -74,6 +83,38 @@ class ChartBridge(
     /** `true` once `chart.js` has reported that KLineChart booted. */
     val isReady: Boolean get() = readyState.value
 
+    private val drawingStateFlow = MutableStateFlow(DrawingState.IDLE)
+
+    /**
+     * What the drawing layer is doing (placing a tool, a selection, the drawing count). Back to
+     * [DrawingState.IDLE] when the page reloads and when the chart switches market or timeframe.
+     */
+    val drawingState: StateFlow<DrawingState> = drawingStateFlow.asStateFlow()
+
+    /**
+     * The newest drawing set per market reported in this process, ahead of Room: a save is still
+     * in flight when a timeframe swap asks for the same market's drawings a few milliseconds
+     * after the user finished one, and restoring the older Room copy would silently undo it.
+     */
+    private val latestDrawings = ConcurrentHashMap<MarketKey, String>()
+
+    /** Saves in the order the page reported them; one consumer, so a later set never loses to an earlier one. */
+    private val saves = Channel<Pair<MarketKey, String>>(Channel.UNLIMITED)
+
+    init {
+        scope.launch(Dispatchers.IO) {
+            for ((key, json) in saves) {
+                try {
+                    drawings.save(key, json)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(CHART_LOG_TAG, "saving drawings for $key failed", e)
+                }
+            }
+        }
+    }
+
     /** Suspends until `chart.js` reports that KLineChart booted; returns at once when it already has. */
     suspend fun awaitReady() {
         readyState.first { it }
@@ -82,7 +123,43 @@ class ChartBridge(
     /** Called by the WebView factory before `loadUrl`, so a reload starts from a clean state. */
     fun onPageStarted() {
         readyState.value = false
+        drawingStateFlow.value = DrawingState.IDLE
         close()
+    }
+
+    /**
+     * Called right before `tg.setMarket`: the page drops its selection and any overlay being placed
+     * with the old series, so the state it reported no longer holds.
+     */
+    fun onMarketChanged() {
+        drawingStateFlow.value = DrawingState.IDLE
+    }
+
+    /**
+     * The `tg.setDrawings` argument for [market]: its drawings from this process's newest report
+     * or from Room, sanitised, `"drawings":[]` when there are none or they cannot be read.
+     *
+     * @param magnet when given, every drawing is restored with this mode: the magnet setting
+     *   overrides all drawings, and a switch of it alone is not a drawing change the page saves.
+     */
+    suspend fun drawingsPayloadFor(market: Market, magnet: MagnetMode? = null): String {
+        val key = market.key
+        val stored = latestDrawings[key] ?: withContext(Dispatchers.IO) {
+            try {
+                drawings.load(key)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(CHART_LOG_TAG, "loading drawings for $key failed", e)
+                null
+            }
+        }
+        val restored = DrawingsCodec.decode(stored).let { list ->
+            if (magnet == null) list else list.map { it.copy(mode = DrawingsCodec.overlayMode(magnet)) }
+        }
+        return DrawingsCodec.encodePayload(
+            DrawingsPayload(exchange = key.exchange.id, ticker = key.pair, drawings = restored),
+        )
     }
 
     /** Handles one message from `chart.js`. Always called on the UI thread by the web listener. */
@@ -99,6 +176,10 @@ class ChartBridge(
             ChartProtocol.ACTION_UNSUBSCRIBE_BAR -> {
                 close()
                 replyOk(reply, req.id, JsonNull)
+            }
+            ChartProtocol.ACTION_DRAWINGS_CHANGED -> drawingsChanged(req)
+            ChartProtocol.ACTION_DRAWING_STATE -> {
+                decode(req, DrawingState.serializer())?.let { drawingStateFlow.value = it }
             }
             else -> Log.w(CHART_LOG_TAG, "unknown action ${req.action}")
         }
@@ -157,6 +238,18 @@ class ChartBridge(
             "warn" -> Log.w(CHART_LOG_TAG, payload.text)
             else -> Log.d(CHART_LOG_TAG, payload.text)
         }
+    }
+
+    private fun drawingsChanged(req: Req) {
+        val payload = DrawingsCodec.decodePayload(req.payload)
+        val key = payload?.let { ChartProtocol.marketKeyOf(it.exchange, it.ticker) }
+        if (payload == null || key == null) {
+            Log.w(CHART_LOG_TAG, "drawingsChanged without a valid market")
+            return
+        }
+        val json = DrawingsCodec.encode(payload.drawings)
+        latestDrawings[key] = json
+        saves.trySend(key to json)
     }
 
     private fun getBars(req: Req, reply: JavaScriptReplyProxy) {

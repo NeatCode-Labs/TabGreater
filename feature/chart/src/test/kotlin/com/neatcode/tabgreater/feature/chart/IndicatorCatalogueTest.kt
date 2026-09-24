@@ -7,7 +7,7 @@ import org.junit.Test
 
 class IndicatorCatalogueTest {
 
-    /** Exactly the 11 built-ins the app exposes, with the defaults KLineChart 10.0.2 ships. */
+    /** Exactly the 11 built-ins the app exposes, with the defaults KLineChart 10.0.3 ships. */
     private val expected = listOf(
         Triple("MA", listOf(5, 10, 30, 60), IndicatorPane.MAIN),
         Triple("EMA", listOf(6, 12, 20), IndicatorPane.MAIN),
@@ -38,8 +38,8 @@ class IndicatorCatalogueTest {
     }
 
     @Test
-    fun `indicators KLineChart 10_0_2 does not have are not offered`() {
-        // ATR does not exist in 10.0.2 and SMA is a weighted average, not a simple one.
+    fun `indicators the vendored KLineChart does not have are not offered`() {
+        // ATR does not exist in 10.0.3 and SMA is a weighted average, not a simple one.
         listOf("ATR", "SMA", "HEIKIN_ASHI", "BBI", "AVP").forEach { assertNull(it, IndicatorCatalogue.find(it)) }
     }
 

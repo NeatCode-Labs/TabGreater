@@ -89,9 +89,11 @@ fun TGBottomSheet(
         containerColor = TG.NavSurface,
         contentColor = TG.TextPrimary,
         dragHandle = { TGSheetHandle() },
-        contentWindowInsets = { WindowInsets.navigationBars },
+        // An immersive sheet never leaves room for a navigation bar that is about to be hidden:
+        // measured with that inset first, the sheet would open detached from the bottom edge.
+        contentWindowInsets = { if (immersive) WindowInsets(0, 0, 0, 0) else WindowInsets.navigationBars },
     ) {
-        if (immersive) ImmersiveSheetWindow()
+        if (immersive) ImmersiveDialogWindow()
         Box(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth()) {
                 if (title != null) {
@@ -114,12 +116,12 @@ fun TGBottomSheet(
 }
 
 /**
- * A modal sheet lives in its own window, which shows the system bars again even when the
- * activity window hides them (fullscreen chart). Hide them on the sheet window too, with the
- * same swipe-to-reveal behaviour the chart uses.
+ * A modal sheet or dialog lives in its own window, which shows the system bars again even when
+ * the activity window hides them (fullscreen chart). Hide them on that window too, with the same
+ * swipe-to-reveal behaviour the chart uses. Call it from inside the sheet's or dialog's content.
  */
 @Composable
-private fun ImmersiveSheetWindow() {
+internal fun ImmersiveDialogWindow() {
     val view = LocalView.current
     LaunchedEffect(view) {
         val window = (view.parent as? DialogWindowProvider)?.window ?: return@LaunchedEffect

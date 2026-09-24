@@ -31,6 +31,9 @@ interface ChartPreferences {
 
     /** Entries outside [IndicatorCatalogue] are dropped before the list is written. */
     suspend fun setIndicators(indicators: List<IndicatorSpec>)
+
+    suspend fun setMagnetMode(mode: MagnetMode)
+    suspend fun setDrawingsVisible(visible: Boolean)
 }
 
 /**
@@ -56,6 +59,8 @@ class ChartSettingsStore(private val context: Context) : ChartPreferences {
             candleType = CandleType.fromNameOrDefault(prefs[Keys.CANDLE_TYPE]),
             logScale = prefs[Keys.LOG_SCALE] ?: ChartSettings.DEFAULT.logScale,
             indicators = ChartSettingsCodec.decodeIndicators(prefs[Keys.INDICATORS]),
+            magnetMode = MagnetMode.fromNameOrDefault(prefs[Keys.MAGNET_MODE]),
+            drawingsVisible = prefs[Keys.DRAWINGS_VISIBLE] ?: ChartSettings.DEFAULT.drawingsVisible,
         )
     }.distinctUntilChanged()
 
@@ -76,10 +81,20 @@ class ChartSettingsStore(private val context: Context) : ChartPreferences {
         store.edit { it[Keys.INDICATORS] = ChartSettingsCodec.encodeIndicators(sanitized) }
     }
 
+    override suspend fun setMagnetMode(mode: MagnetMode) {
+        store.edit { it[Keys.MAGNET_MODE] = mode.name }
+    }
+
+    override suspend fun setDrawingsVisible(visible: Boolean) {
+        store.edit { it[Keys.DRAWINGS_VISIBLE] = visible }
+    }
+
     private object Keys {
         val TIMEFRAME = stringPreferencesKey("timeframe")
         val CANDLE_TYPE = stringPreferencesKey("candle_type")
         val LOG_SCALE = booleanPreferencesKey("log_scale")
         val INDICATORS = stringPreferencesKey("indicators")
+        val MAGNET_MODE = stringPreferencesKey("magnet_mode")
+        val DRAWINGS_VISIBLE = booleanPreferencesKey("drawings_visible")
     }
 }

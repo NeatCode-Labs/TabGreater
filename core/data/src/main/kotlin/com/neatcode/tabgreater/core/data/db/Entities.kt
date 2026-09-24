@@ -91,3 +91,23 @@ data class TickerSnapshotEntity(
     @ColumnInfo(name = "change_pct_24h") val changePct24h: Double?,
     val timestamp: Long,
 )
+
+/**
+ * The user's chart drawings for one market, as the opaque JSON array the chart page produces.
+ *
+ * User data, not cache: nothing prunes this table, and watchlist import/export leave it alone.
+ * One row per market key; drawing on another timeframe of the same pair edits the same row,
+ * because a drawing is anchored to timestamps and prices rather than to bar indices.
+ */
+@Entity(tableName = ChartDrawingEntity.TABLE)
+data class ChartDrawingEntity(
+    /** Canonical key `"exchange:BASE/QUOTE"`. */
+    @PrimaryKey @ColumnInfo(name = "market_key") val marketKey: String,
+    /** JSON array of drawings; never `[]` — an empty set deletes the row instead. */
+    val drawings: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+) {
+    companion object {
+        const val TABLE = "chart_drawings"
+    }
+}

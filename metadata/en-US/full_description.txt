@@ -19,6 +19,7 @@ TabGreater is a crypto watchlist for Android. It shows live spot prices from fiv
 * Timeframes from 1 minute to 1 month, panning back through history on most exchanges (Kraken's public API only returns its newest ~720 bars)
 * 11 indicators: MA, EMA, BOLL, SAR, VOL, MACD, RSI, KDJ, CCI, DMI, OBV
 * Logarithmic or automatic scale, a fullscreen mode, and sharing the chart as a PNG
+* 30 drawing tools: trend lines, rays, horizontal and vertical lines, channels, Fibonacci retracement / extension / fans, Gann box, shapes, brush, wave patterns, text and tags — with a magnet that snaps to candle prices; drawings are kept per market
 
 <b>Home-screen widgets</b>
 

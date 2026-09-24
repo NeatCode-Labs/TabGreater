@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chart drawing tools: the "Draw" sheet, the floating strip over the canvas and its dialogs. -->
+<resources>
+    <string name="cd_chart_draw">Drawing tools</string>
+    <!-- The same toolbar button while "Show drawings" is off (the pencil then carries a dot). -->
+    <string name="cd_chart_draw_hidden">Drawing tools, drawings hidden</string>
+    <string name="chart_draw_title">Draw</string>
+
+    <!-- Sections of the sheet -->
+    <string name="chart_draw_group_lines">Lines</string>
+    <string name="chart_draw_group_channels">Channels</string>
+    <string name="chart_draw_group_fibonacci">Fibonacci</string>
+    <string name="chart_draw_group_shapes">Shapes</string>
+    <string name="chart_draw_group_patterns">Patterns</string>
+    <string name="chart_draw_group_annotations">Annotations</string>
+    <string name="chart_draw_group_magnet">Magnet</string>
+    <string name="chart_draw_group_options">Options</string>
+
+    <!-- Tools (one per overlay template) -->
+    <string name="chart_draw_tool_segment">Trend line</string>
+    <string name="chart_draw_tool_ray_line">Ray</string>
+    <string name="chart_draw_tool_straight_line">Extended line</string>
+    <string name="chart_draw_tool_arrow">Arrow</string>
+    <string name="chart_draw_tool_horizontal_straight_line">Horizontal line</string>
+    <string name="chart_draw_tool_horizontal_ray_line">Horizontal ray</string>
+    <string name="chart_draw_tool_horizontal_segment">Horizontal segment</string>
+    <string name="chart_draw_tool_vertical_straight_line">Vertical line</string>
+    <string name="chart_draw_tool_vertical_ray_line">Vertical ray</string>
+    <string name="chart_draw_tool_vertical_segment">Vertical segment</string>
+    <string name="chart_draw_tool_price_line">Price line</string>
+    <string name="chart_draw_tool_parallel_straight_line">Parallel channel</string>
+    <string name="chart_draw_tool_price_channel_line">Price channel</string>
+    <string name="chart_draw_tool_fibonacci_line">Fib retracement</string>
+    <string name="chart_draw_tool_fibonacci_extension">Fib extension</string>
+    <string name="chart_draw_tool_fibonacci_segment">Fib segment</string>
+    <string name="chart_draw_tool_fibonacci_circle">Fib circles</string>
+    <string name="chart_draw_tool_fibonacci_spiral">Fib spiral</string>
+    <string name="chart_draw_tool_fibonacci_speed_resistance_fan">Fib speed fan</string>
+    <string name="chart_draw_tool_gann_box">Gann box</string>
+    <string name="chart_draw_tool_rect">Rectangle</string>
+    <string name="chart_draw_tool_circle">Circle</string>
+    <string name="chart_draw_tool_triangle">Triangle</string>
+    <string name="chart_draw_tool_parallelogram">Parallelogram</string>
+    <string name="chart_draw_tool_brush">Brush</string>
+    <string name="chart_draw_tool_three_waves">Three waves</string>
+    <string name="chart_draw_tool_five_waves">Five waves</string>
+    <string name="chart_draw_tool_eight_waves">Eight waves</string>
+    <string name="chart_draw_tool_any_waves">Any waves</string>
+    <string name="chart_draw_tool_abcd">ABCD</string>
+    <string name="chart_draw_tool_xabcd">XABCD</string>
+    <string name="chart_draw_tool_simple_annotation">Text</string>
+    <string name="chart_draw_tool_simple_tag">Tag</string>
+    <!-- A drawing whose template this build does not know (never shown for the catalogue). -->
+    <string name="chart_draw_tool_unknown">Drawing</string>
+
+    <!-- Magnet: one row of three under the "Magnet" caption -->
+    <string name="chart_draw_magnet_none">Off</string>
+    <string name="chart_draw_magnet_weak">Weak</string>
+    <string name="chart_draw_magnet_strong">Strong</string>
+
+    <!-- Options -->
+    <string name="chart_draw_show">Show drawings</string>
+    <string name="chart_draw_delete_all">Delete all drawings</string>
+
+    <!-- Floating strip over the canvas -->
+    <string name="chart_draw_placing">%1$s · tap to place</string>
+    <string name="cd_chart_draw_cancel">Cancel drawing</string>
+    <string name="cd_chart_draw_lock">Lock drawing</string>
+    <string name="cd_chart_draw_unlock">Unlock drawing</string>
+    <string name="cd_chart_draw_delete">Delete drawing</string>
+
+    <!-- Dialogs -->
+    <string name="chart_draw_text_title">Text</string>
+    <string name="chart_draw_delete_all_title">Delete all drawings?</string>
+    <string name="chart_draw_delete_all_body">Every drawing on %1$s will be removed. This cannot be undone.</string>
+    <string name="chart_draw_delete_all_confirm">Delete</string>
+</resources>

@@ -106,6 +106,12 @@ object ChartProtocol {
     const val ACTION_LOG = "log"
     const val ACTION_READY = "ready"
 
+    /** Notice: the user's drawings for one market changed (payload: [DrawingsPayload]). */
+    const val ACTION_DRAWINGS_CHANGED = "drawingsChanged"
+
+    /** Notice: the drawing mode or the selection changed (payload: [DrawingState]). */
+    const val ACTION_DRAWING_STATE = "drawingState"
+
     /** Page older history (KLineChart prepends the result). */
     const val TYPE_FORWARD = "forward"
 

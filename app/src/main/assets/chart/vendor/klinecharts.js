@@ -1,6 +1,6 @@
 /**
      * @license
-     * KLineChart v10.0.2
+     * KLineChart v10.0.3
      * Copyright (c) 2019 lihu.
      * Licensed under Apache License 2.0 https://www.apache.org/licenses/LICENSE-2.0
      */
@@ -496,7 +496,7 @@ function logError(api, invalidParam, append) {
     log('%c😟 klinecharts error%c %s%s%s', 'padding:3px 4px;border-radius:2px;color:#ffffff;background-color:#F92855;', 'color:#F92855;', api, invalidParam, append );
 }
 function logTag() {
-    log('%c❤️ Welcome to klinecharts. Version is 10.0.2', 'border-radius:4px;border:dashed 1px #1677FF;line-height:70px;padding:0 20px;margin:16px 0;font-size:14px;color:#1677FF;', '', '', '', '');
+    log('%c❤️ Welcome to klinecharts. Version is 10.0.3', 'border-radius:4px;border:dashed 1px #1677FF;line-height:70px;padding:0 20px;margin:16px 0;font-size:14px;color:#1677FF;', '', '', '', '');
 }
 
 /**
@@ -3083,8 +3083,7 @@ var Event = /** @class */ (function () {
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-function eachFigures(indicator, dataIndex, barSpace, defaultStyles, eachFigureCallback) {
-    var result = indicator.result;
+function prepareIndicatorFigures(indicator, defaultStyles) {
     var figures = indicator.figures;
     var styles = indicator.styles;
     var textStyles = formatValue(styles, 'texts', defaultStyles.texts);
@@ -3099,10 +3098,10 @@ function eachFigures(indicator, dataIndex, barSpace, defaultStyles, eachFigureCa
     var circleCount = 0;
     var barCount = 0;
     var lineCount = 0;
+    var preparedFigures = [];
     var defaultFigureStyles;
     var figureIndex = 0;
     figures.forEach(function (figure) {
-        var _a;
         switch (figure.type) {
             case 'text': {
                 figureIndex = textCount;
@@ -3132,18 +3131,29 @@ function eachFigures(indicator, dataIndex, barSpace, defaultStyles, eachFigureCa
             }
         }
         if (isValid(figure.type)) {
-            var ss = (_a = figure.styles) === null || _a === void 0 ? void 0 : _a.call(figure, {
-                data: {
-                    prev: result[dataIndex - 1],
-                    current: result[dataIndex],
-                    next: result[dataIndex + 1]
-                },
-                indicator: indicator,
-                barSpace: barSpace,
-                defaultStyles: defaultStyles
-            });
-            eachFigureCallback(figure, __assign(__assign({}, defaultFigureStyles), ss), figureIndex);
+            preparedFigures.push({ figure: figure, defaultStyles: __assign({}, defaultFigureStyles), index: figureIndex });
         }
+    });
+    return preparedFigures;
+}
+function eachFigures(indicator, dataIndex, barSpace, defaultStyles, eachFigureCallback, preparedFigures) {
+    if (preparedFigures === void 0) { preparedFigures = prepareIndicatorFigures(indicator, defaultStyles); }
+    var result = indicator.result;
+    preparedFigures.forEach(function (_a) {
+        var _b;
+        var figure = _a.figure, defaultFigureStyles = _a.defaultStyles, index = _a.index;
+        var dynamicStyles = (_b = figure.styles) === null || _b === void 0 ? void 0 : _b.call(figure, {
+            data: {
+                prev: result[dataIndex - 1],
+                current: result[dataIndex],
+                next: result[dataIndex + 1]
+            },
+            indicator: indicator,
+            barSpace: barSpace,
+            defaultStyles: defaultStyles
+        });
+        var figureStyles = isValid(dynamicStyles) ? __assign(__assign({}, defaultFigureStyles), dynamicStyles) : defaultFigureStyles;
+        eachFigureCallback(figure, figureStyles, index);
     });
 }
 var IndicatorImp = /** @class */ (function () {
@@ -8056,6 +8066,7 @@ var IndicatorView = /** @class */ (function (_super) {
                 }
                 if (!isCover) {
                     var result_1 = indicator.result;
+                    var preparedFigures_1 = prepareIndicatorFigures(indicator, defaultStyles);
                     var lines_1 = [];
                     _this.eachChildren(function (data, barSpace) {
                         var _a, _b, _c;
@@ -8149,7 +8160,7 @@ var IndicatorView = /** @class */ (function (_super) {
                                     })) === null || _e === void 0 ? void 0 : _e.draw(ctx);
                                 }
                             }
-                        });
+                        }, preparedFigures_1);
                     });
                     // merge line and render
                     lines_1.forEach(function (items) {
@@ -8235,6 +8246,7 @@ var OverlayImp = /** @class */ (function () {
         this.lock = false;
         this.visible = true;
         this.zLevel = 0;
+        this.fixedZLevel = false;
         this.needDefaultPointFigure = false;
         this.needDefaultXAxisFigure = false;
         this.needDefaultYAxisFigure = false;
@@ -13588,15 +13600,11 @@ var StoreImp = /** @class */ (function () {
             }
         }
         // More processing and loading, more loading if there are callback methods and no data is being loaded
-        if (from === 0) {
-            if (this._dataLoadMore.forward) {
-                this._processDataLoad('forward');
-            }
+        if (from === 0 && this._dataLoadMore.forward) {
+            this._processDataLoad('forward');
         }
-        else if (to === totalBarCount) {
-            if (this._dataLoadMore.backward) {
-                this._processDataLoad('backward');
-            }
+        else if (to === totalBarCount && this._dataLoadMore.backward) {
+            this._processDataLoad('backward');
         }
     };
     StoreImp.prototype._processDataLoad = function (type) {
@@ -14502,16 +14510,20 @@ var StoreImp = /** @class */ (function () {
                 var ignoreUpdateFlag = false;
                 var sortFlag = false;
                 if (overlay !== null) {
-                    overlay.override({ zLevel: overlay.getPrevZLevel() });
-                    sortFlag = true;
+                    if (!overlay.fixedZLevel) {
+                        overlay.override({ zLevel: overlay.getPrevZLevel() });
+                        sortFlag = true;
+                    }
                     if (processOnMouseLeaveEvent(overlay, figure)) {
                         ignoreUpdateFlag = true;
                     }
                 }
                 if (infoOverlay !== null) {
-                    infoOverlay.setPrevZLevel(infoOverlay.zLevel);
-                    infoOverlay.override({ zLevel: Number.MAX_SAFE_INTEGER });
-                    sortFlag = true;
+                    if (!infoOverlay.fixedZLevel) {
+                        infoOverlay.setPrevZLevel(infoOverlay.zLevel);
+                        infoOverlay.override({ zLevel: Number.MAX_SAFE_INTEGER });
+                        sortFlag = true;
+                    }
                     if (processOnMouseEnterEvent(infoOverlay, info.figure)) {
                         ignoreUpdateFlag = true;
                     }
@@ -15839,7 +15851,7 @@ var chartBaseId = 1;
  * @return {string}
  */
 function version() {
-    return '10.0.2';
+    return '10.0.3';
 }
 /**
  * Init chart instance

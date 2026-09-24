@@ -14,7 +14,7 @@ The "popular pairs" shortcuts on the add-pair screen and in the widget setup com
 
 ## What stays on your device
 
-Watchlists, settings, widget configuration and the candle cache are stored in the app's private storage. If Android Backup is enabled on your phone, Android includes that storage in your Google account backup, like it does for other apps. "Export watchlists" writes a JSON file to a location you choose; TabGreater never reads it again unless you import it.
+Watchlists, chart drawings (including any text you add to them), settings, widget configuration and the candle cache are stored in the app's private storage. If Android Backup is enabled on your phone, Android includes that storage in your Google account backup, like it does for other apps. "Export watchlists" writes a JSON file to a location you choose; TabGreater never reads it again unless you import it.
 
 ## Permissions
 

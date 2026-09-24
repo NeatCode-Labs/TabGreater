@@ -7,7 +7,11 @@ import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.Ticker
 import com.neatcode.tabgreater.core.model.Timeframe
 import com.neatcode.tabgreater.feature.chart.CandleType
+import com.neatcode.tabgreater.feature.chart.DrawingAction
+import com.neatcode.tabgreater.feature.chart.DrawingCommand
+import com.neatcode.tabgreater.feature.chart.DrawingState
 import com.neatcode.tabgreater.feature.chart.IndicatorCatalogue
+import com.neatcode.tabgreater.feature.chart.MagnetMode
 import com.neatcode.tabgreater.ui.testing.FakeAppSettings
 import com.neatcode.tabgreater.ui.testing.FakeChartPreferences
 import com.neatcode.tabgreater.ui.testing.FakeMarketDataRepository
@@ -16,6 +20,7 @@ import com.neatcode.tabgreater.ui.testing.FakeSparklineRepository
 import com.neatcode.tabgreater.ui.testing.FakeWatchlistRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -45,6 +50,7 @@ class ChartViewModelTest {
     private val sparklines = FakeSparklineRepository()
     private val chartSettings = FakeChartPreferences()
     private var appSettings = FakeAppSettings()
+    private val drawingState = MutableStateFlow(DrawingState.IDLE)
 
     private val key = MarketKey("kraken:BTC/EUR")
 
@@ -59,7 +65,8 @@ class ChartViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel() = ChartViewModel(key, markets, watchlists, live, sparklines, chartSettings, appSettings)
+    private fun viewModel() =
+        ChartViewModel(key, markets, watchlists, live, sparklines, chartSettings, appSettings, drawingState)
 
     /** Collects `state` so the `WhileSubscribed` pipeline actually runs. */
     private fun TestScope.collecting(viewModel: ChartViewModel) {
@@ -155,7 +162,8 @@ class ChartViewModelTest {
     @Test
     fun `a pair the exchange does not list is reported as unavailable`() = runTest(dispatcher) {
         val unknown = MarketKey("kraken:FOO/EUR")
-        val viewModel = ChartViewModel(unknown, markets, watchlists, live, sparklines, chartSettings, appSettings)
+        val viewModel =
+            ChartViewModel(unknown, markets, watchlists, live, sparklines, chartSettings, appSettings, drawingState)
         backgroundScope.launch(dispatcher) { viewModel.state.collect {} }
         advanceUntilIdle()
 
@@ -316,6 +324,91 @@ class ChartViewModelTest {
         viewModel.toggleIndicator("ATR")
         advanceUntilIdle()
         assertEquals(listOf("VOL"), chartSettings.value.indicators.map { it.name })
+    }
+
+    // ------------------------------------------------------------------ drawing tools
+
+    @Test
+    fun `issue numbers every command with a growing sequence`() {
+        val viewModel = viewModel()
+        assertNull(viewModel.drawingCommand.value)
+
+        viewModel.issue(DrawingAction.StartTool("segment"))
+        assertEquals(DrawingCommand(1, DrawingAction.StartTool("segment")), viewModel.drawingCommand.value)
+
+        // The same action again is a new command, not a no-op.
+        viewModel.issue(DrawingAction.StartTool("segment"))
+        assertEquals(2, viewModel.drawingCommand.value?.seq)
+
+        viewModel.issue(DrawingAction.ClearAll)
+        assertEquals(DrawingCommand(3, DrawingAction.ClearAll), viewModel.drawingCommand.value)
+    }
+
+    @Test
+    fun `a handled command is dropped but a newer one survives`() {
+        val viewModel = viewModel()
+        viewModel.issue(DrawingAction.Cancel)
+        val first = viewModel.drawingCommand.value!!
+
+        viewModel.issue(DrawingAction.Deselect)
+        viewModel.onDrawingCommandHandled(first)
+        assertEquals(DrawingCommand(2, DrawingAction.Deselect), viewModel.drawingCommand.value)
+
+        viewModel.onDrawingCommandHandled(viewModel.drawingCommand.value!!)
+        assertNull(viewModel.drawingCommand.value)
+
+        // Numbering continues after a handled command.
+        viewModel.issue(DrawingAction.RemoveSelected)
+        assertEquals(3, viewModel.drawingCommand.value?.seq)
+    }
+
+    @Test
+    fun `drawing options persist and reach the state`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        collecting(viewModel)
+        advanceUntilIdle()
+        assertEquals(MagnetMode.WEAK, viewModel.state.value.settings.magnetMode)
+        assertTrue(viewModel.state.value.settings.drawingsVisible)
+
+        viewModel.setMagnetMode(MagnetMode.STRONG)
+        viewModel.setDrawingsVisible(false)
+        advanceUntilIdle()
+
+        assertEquals(MagnetMode.STRONG, chartSettings.value.magnetMode)
+        assertFalse(chartSettings.value.drawingsVisible)
+        assertEquals(MagnetMode.STRONG, viewModel.state.value.settings.magnetMode)
+        assertFalse(viewModel.state.value.settings.drawingsVisible)
+    }
+
+    @Test
+    fun `picking a tool while drawings are hidden turns the setting back on`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        collecting(viewModel)
+        viewModel.setDrawingsVisible(false)
+        advanceUntilIdle()
+        assertFalse(viewModel.state.value.settings.drawingsVisible)
+
+        // Other drawing actions leave the setting alone.
+        viewModel.issue(DrawingAction.Deselect)
+        advanceUntilIdle()
+        assertFalse(chartSettings.value.drawingsVisible)
+
+        viewModel.issue(DrawingAction.StartTool("segment"))
+        advanceUntilIdle()
+
+        assertTrue(chartSettings.value.drawingsVisible)
+        assertTrue(viewModel.state.value.settings.drawingsVisible)
+        assertEquals(DrawingAction.StartTool("segment"), viewModel.drawingCommand.value?.action)
+    }
+
+    @Test
+    fun `the page's drawing state is passed through`() {
+        val viewModel = viewModel()
+        val selected = DrawingState(selectedId = "o1", selectedName = "rect", count = 2)
+
+        drawingState.value = selected
+
+        assertEquals(selected, viewModel.drawingState.value)
     }
 
     private companion object {

@@ -14,5 +14,5 @@ import org.koin.dsl.module
  */
 val chartModule = module {
     single { ChartSettingsStore(androidContext()) } bind ChartPreferences::class
-    single { ChartBridge(scope = get(APP_SCOPE), registry = get(), markets = get()) }
+    single { ChartBridge(scope = get(APP_SCOPE), registry = get(), markets = get(), drawings = get()) }
 }

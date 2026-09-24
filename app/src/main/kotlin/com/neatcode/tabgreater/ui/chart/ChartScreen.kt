@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,6 +78,7 @@ import com.neatcode.tabgreater.core.model.Timeframe
 import com.neatcode.tabgreater.feature.chart.ChartBridge
 import com.neatcode.tabgreater.feature.chart.ChartPeriods
 import com.neatcode.tabgreater.feature.chart.ChartView
+import com.neatcode.tabgreater.feature.chart.DrawingAction
 import com.neatcode.tabgreater.ui.components.ExchangeGlyph
 import com.neatcode.tabgreater.ui.components.TGIconButton
 import com.neatcode.tabgreater.ui.components.TGTopBar
@@ -85,8 +87,10 @@ import com.neatcode.tabgreater.ui.theme.TG
 import com.neatcode.tabgreater.ui.theme.TGType
 import com.neatcode.tabgreater.ui.watchlist.shrunkPrice
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
@@ -97,6 +101,15 @@ private val ToolbarHeight = 48.dp
 private val FullscreenToolbarHeight = 40.dp
 private val PillShape = RoundedCornerShape(percent = 50)
 private val TabIndicatorShape = RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp)
+
+/** What floats over the canvas' bottom edge: the `log` / `auto` pills, 6 dp up, plus a 4 dp gap. */
+private val PillsReserve = 6.dp + TGDimens.CHIP_H_DP.dp + 4.dp
+
+/** How long "Share chart" waits for the page to drop a selection or a half-placed tool. */
+private const val SHARE_CLEAR_TIMEOUT_MS = 600L
+
+/** After that, the WebView's next frame: the canvas repaints on its own frame, after Compose's. */
+private const val SHARE_SETTLE_MS = 64L
 
 /**
  * Below this window height the 44 dp statistics grid is folded into the header row.
@@ -126,12 +139,18 @@ fun ChartScreen(
     val viewModel: ChartViewModel = koinViewModel { parametersOf(key) }
     val bridge: ChartBridge = koinInject()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val drawingState by viewModel.drawingState.collectAsStateWithLifecycle()
+    val drawingCommand by viewModel.drawingCommand.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var fullscreen by rememberSaveable { mutableStateOf(false) }
     // A one-shot trigger, deliberately not saveable: restoring it would re-run an autoscale.
     var autoScaleTick by remember { mutableIntStateOf(0) }
     var sheet by remember { mutableStateOf<ChartSheet?>(null) }
+    var confirmDeleteDrawings by remember { mutableStateOf(false) }
+    // The annotation whose text dialog was already answered: the page clears `needsTextId` a
+    // round trip later, and the dialog must not flash up again in between.
+    var answeredTextId by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     // Hoisted so the chip row keeps its offset across a fullscreen round-trip: the two toolbars
     // are separate call sites, and a `rememberScrollState()` inside each would start over.
@@ -170,6 +189,17 @@ fun ChartScreen(
         sharing = true
         scope.launch {
             try {
+                // The picture is the chart, not the editing session: no selection handles, no
+                // half-placed tool, no strip (it is hidden while `sharing`). The page confirms
+                // through drawingState; then one Compose frame drops the strip and the WebView
+                // gets a frame of its own to repaint the canvas.
+                if (viewModel.drawingState.value.busy) {
+                    viewModel.issue(DrawingAction.ClearFocus)
+                    withTimeoutOrNull(SHARE_CLEAR_TIMEOUT_MS) { viewModel.drawingState.first { !it.busy } }
+                }
+                withFrameNanos { }
+                withFrameNanos { }
+                delay(SHARE_SETTLE_MS)
                 ChartShare.share(host, rect, state.key, state.settings.timeframe)
             } catch (e: CancellationException) {
                 throw e
@@ -184,6 +214,11 @@ fun ChartScreen(
 
     FullscreenEffect(fullscreen)
     BackHandler(enabled = fullscreen) { fullscreen = false }
+    // Composed after the fullscreen handler so it wins: Back first drops the tool being placed or
+    // the selection, and only then leaves fullscreen or the screen.
+    BackHandler(enabled = drawingState.drawing || drawingState.selectedId != null) {
+        viewModel.issue(if (drawingState.drawing) DrawingAction.Cancel else DrawingAction.Deselect)
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event -> snackbarHostState.showSnackbar(context.describe(event)) }
@@ -234,7 +269,8 @@ fun ChartScreen(
                     HorizontalDivider(thickness = 1.dp, color = TG.Outline)
                 }
 
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val canvasHeight = maxHeight
                     val market = state.market
                     if (market != null) {
                         ChartView(
@@ -246,6 +282,10 @@ fun ChartScreen(
                             autoScaleTick = autoScaleTick,
                             bridge = bridge,
                             modifier = Modifier.fillMaxSize(),
+                            magnetMode = state.settings.magnetMode,
+                            drawingsVisible = state.settings.drawingsVisible,
+                            drawingCommand = drawingCommand,
+                            onDrawingCommandHandled = viewModel::onDrawingCommandHandled,
                             debuggable = debuggable,
                         )
                     } else if (state.unavailable) {
@@ -253,6 +293,20 @@ fun ChartScreen(
                             text = stringResource(R.string.chart_unavailable, state.pair),
                             style = TGType.body,
                             modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        )
+                    }
+
+                    // Bottom-left of the candle pane's plot: clear of every legend, of the price
+                    // and time labels and of the scale pills (see stripSlot). Never in a share.
+                    if (!sharing) {
+                        DrawingStrip(
+                            state = drawingState,
+                            onCancel = { viewModel.issue(DrawingAction.Cancel) },
+                            onToggleLock = { viewModel.issue(DrawingAction.ToggleSelectedLock) },
+                            onDelete = { viewModel.issue(DrawingAction.RemoveSelected) },
+                            canvasHeight = canvasHeight,
+                            bottomReserve = if (fullscreen) FullscreenToolbarHeight + PillsReserve else PillsReserve,
+                            modifier = Modifier.align(Alignment.TopStart),
                         )
                     }
 
@@ -273,6 +327,8 @@ fun ChartScreen(
                             chipScroll = chipScroll,
                             onTimeframe = viewModel::setTimeframe,
                             onShare = ::shareChart,
+                            onDraw = { sheet = ChartSheet.DRAWING },
+                            drawingsHidden = !state.settings.drawingsVisible,
                             onCandleType = { sheet = ChartSheet.CANDLE_TYPE },
                             onIndicators = { sheet = ChartSheet.INDICATORS },
                             onFullscreen = { fullscreen = false },
@@ -306,6 +362,8 @@ fun ChartScreen(
                     chipScroll = chipScroll,
                     onTimeframe = viewModel::setTimeframe,
                     onShare = ::shareChart,
+                    onDraw = { sheet = ChartSheet.DRAWING },
+                    drawingsHidden = !state.settings.drawingsVisible,
                     onCandleType = { sheet = ChartSheet.CANDLE_TYPE },
                     onIndicators = { sheet = ChartSheet.INDICATORS },
                     onFullscreen = {
@@ -323,8 +381,41 @@ fun ChartScreen(
         onDismiss = { sheet = null },
         onCandleType = viewModel::setCandleType,
         onToggleIndicator = viewModel::toggleIndicator,
+        drawingState = drawingState,
+        onPickTool = { name -> viewModel.issue(DrawingAction.StartTool(name)) },
+        onMagnetMode = viewModel::setMagnetMode,
+        onDrawingsVisible = viewModel::setDrawingsVisible,
+        onDeleteAllDrawings = { confirmDeleteDrawings = true },
         immersive = fullscreen,
     )
+
+    val textId = drawingState.needsTextId
+    if (textId != null && textId != answeredTextId) {
+        DrawingTextDialog(
+            tool = drawingState.needsTextTool,
+            onConfirm = { text ->
+                answeredTextId = textId
+                viewModel.issue(DrawingAction.SetText(textId, text))
+            },
+            onCancel = {
+                answeredTextId = textId
+                viewModel.issue(DrawingAction.RemoveDrawing(textId))
+            },
+            immersive = fullscreen,
+        )
+    }
+
+    if (confirmDeleteDrawings) {
+        DeleteAllDrawingsDialog(
+            market = "${state.key.exchange.displayName} ${state.pair}",
+            onConfirm = {
+                confirmDeleteDrawings = false
+                viewModel.issue(DrawingAction.ClearAll)
+            },
+            onDismiss = { confirmDeleteDrawings = false },
+            immersive = fullscreen,
+        )
+    }
 }
 
 /** The snackbar text for a one-shot [ChartEvent]. */
@@ -570,7 +661,7 @@ private fun ScalePill(label: String, active: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Bottom toolbar: scrolling timeframe chips · share · candle type · indicators · fullscreen. */
+/** Bottom toolbar: scrolling timeframe chips · share · draw · candle type · indicators · fullscreen. */
 @Composable
 private fun ChartToolbar(
     timeframe: Timeframe,
@@ -579,6 +670,8 @@ private fun ChartToolbar(
     chipScroll: ScrollState,
     onTimeframe: (Timeframe) -> Unit,
     onShare: () -> Unit,
+    onDraw: () -> Unit,
+    drawingsHidden: Boolean,
     onCandleType: () -> Unit,
     onIndicators: () -> Unit,
     onFullscreen: () -> Unit,
@@ -614,6 +707,13 @@ private fun ChartToolbar(
             color = TG.Outline,
         )
         ToolbarAction(Icons.Outlined.Share, stringResource(R.string.cd_chart_share), onShare)
+        // A dot on the pencil while "Show drawings" is off, so hidden drawings are not forgotten.
+        ToolbarAction(
+            imageVector = TGIcons.Draw,
+            contentDescription = stringResource(if (drawingsHidden) R.string.cd_chart_draw_hidden else R.string.cd_chart_draw),
+            onClick = onDraw,
+            badge = drawingsHidden,
+        )
         ToolbarAction(TGIcons.CandleType, stringResource(R.string.cd_chart_type), onCandleType)
         ToolbarAction(TGIcons.Indicators, stringResource(R.string.cd_chart_indicators), onIndicators)
         ToolbarAction(
@@ -661,13 +761,27 @@ private fun ToolbarAction(
     imageVector: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
+    badge: Boolean = false,
 ) {
     Spacer(Modifier.width(16.dp))
-    TGIconButton(
-        imageVector = imageVector,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        tint = TG.TextSecondary,
-        size = 20.dp,
-    )
+    Box {
+        TGIconButton(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            onClick = onClick,
+            tint = TG.TextSecondary,
+            size = 20.dp,
+        )
+        if (badge) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .size(BadgeSize)
+                    .clip(PillShape)
+                    .background(TG.Accent),
+            )
+        }
+    }
 }
+
+private val BadgeSize = 6.dp

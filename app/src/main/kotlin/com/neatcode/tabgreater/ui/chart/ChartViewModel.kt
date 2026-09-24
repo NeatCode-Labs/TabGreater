@@ -22,13 +22,19 @@ import com.neatcode.tabgreater.core.model.WatchlistItem
 import com.neatcode.tabgreater.feature.chart.CandleType
 import com.neatcode.tabgreater.feature.chart.ChartSettings
 import com.neatcode.tabgreater.feature.chart.ChartPreferences
+import com.neatcode.tabgreater.feature.chart.DrawingAction
+import com.neatcode.tabgreater.feature.chart.DrawingCommand
+import com.neatcode.tabgreater.feature.chart.DrawingState
 import com.neatcode.tabgreater.feature.chart.IndicatorCatalogue
+import com.neatcode.tabgreater.feature.chart.MagnetMode
 import com.neatcode.tabgreater.ui.watchlist.changePct
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -53,6 +59,12 @@ import kotlinx.coroutines.launch
  * The 24 h change follows the same three-step rule as a tile ([changePct]): the exchange's own
  * percentage, else one derived from its 24 h open, else the 24 h sparkline window — the only
  * source a Kraken header has until the v2 socket delivers its first rolling `change_pct`.
+ *
+ * Drawing tools: the drawings themselves live in the chart page and are persisted by the bridge;
+ * this model only carries the options (magnet, visibility — part of [ChartPreferences]), the
+ * page's [drawingState] and the one-shot [drawingCommand]s the screen hands to the canvas.
+ *
+ * @param drawingState the chart bridge's `drawingState` (process-wide, one cached WebView).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChartViewModel(
@@ -63,7 +75,14 @@ class ChartViewModel(
     private val sparklineRepository: SparklineRepository,
     private val chartSettings: ChartPreferences,
     private val appSettings: AppSettings,
+    val drawingState: StateFlow<DrawingState>,
 ) : ViewModel() {
+
+    private val drawingCommandFlow = MutableStateFlow<DrawingCommand?>(null)
+    private var drawingSeq = 0
+
+    /** The newest drawing instruction the canvas has not carried out yet; see [issue]. */
+    val drawingCommand: StateFlow<DrawingCommand?> = drawingCommandFlow.asStateFlow()
 
     /**
      * The instrument, looked up once. A market the app has never seen (a widget deep link into a
@@ -172,6 +191,37 @@ class ChartViewModel(
             val next = if (current.any { it.name == name }) current.filterNot { it.name == name } else current + spec
             chartSettings.setIndicators(next)
         }
+    }
+
+    fun setMagnetMode(mode: MagnetMode) {
+        viewModelScope.launch { chartSettings.setMagnetMode(mode) }
+    }
+
+    fun setDrawingsVisible(visible: Boolean) {
+        viewModelScope.launch { chartSettings.setDrawingsVisible(visible) }
+    }
+
+    /**
+     * Hands [action] to the canvas as a new [DrawingCommand]. The sequence number only grows, so
+     * the same action twice in a row is still two commands. Main thread only (UI callbacks).
+     *
+     * Picking a tool while drawings are hidden shows them again: the page does that on its own
+     * (nobody draws blind), and the "Show drawings" setting follows here, so it stays the single
+     * source of truth. Otherwise the next canvas boot would re-apply "hidden" and the drawing just
+     * made would seem lost, and the sheet's check mark and the toolbar badge would be wrong.
+     */
+    fun issue(action: DrawingAction) {
+        drawingCommandFlow.value = DrawingCommand(++drawingSeq, action)
+        if (action is DrawingAction.StartTool) {
+            viewModelScope.launch {
+                if (!chartSettings.settings.first().drawingsVisible) chartSettings.setDrawingsVisible(true)
+            }
+        }
+    }
+
+    /** The canvas carried out [command]; it is dropped unless a newer one has replaced it already. */
+    fun onDrawingCommandHandled(command: DrawingCommand) {
+        drawingCommandFlow.compareAndSet(command, null)
     }
 
     /**

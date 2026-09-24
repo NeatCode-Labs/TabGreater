@@ -9,7 +9,9 @@ import com.neatcode.tabgreater.core.data.popular.PopularPairsCache
 import com.neatcode.tabgreater.core.data.popular.PopularPairsRepository
 import com.neatcode.tabgreater.core.data.popular.PopularPairsSource
 import com.neatcode.tabgreater.core.data.popular.PopularPairsStore
+import com.neatcode.tabgreater.core.data.repo.ChartDrawingRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
+import com.neatcode.tabgreater.core.data.repo.RoomChartDrawingRepository
 import com.neatcode.tabgreater.core.data.repo.RoomMarketRepository
 import com.neatcode.tabgreater.core.data.repo.RoomSparklineRepository
 import com.neatcode.tabgreater.core.data.repo.RoomWatchlistRepository
@@ -63,6 +65,7 @@ val dataModule = module {
     single { get<TabGreaterDatabase>().marketDao() }
     single { get<TabGreaterDatabase>().candleDao() }
     single { get<TabGreaterDatabase>().tickerSnapshotDao() }
+    single { get<TabGreaterDatabase>().chartDrawingDao() }
     single<AppSettings> { SettingsStore(androidContext()) }
     single<TransactionRunner> { RoomTransactionRunner(get()) }
 
@@ -88,6 +91,8 @@ val dataModule = module {
     single<WatchlistRepository> { RoomWatchlistRepository(get(), get(), get()) }
     single<MarketRepository> { RoomMarketRepository(get(), get()) }
     single<SparklineRepository> { RoomSparklineRepository(get(), get(), get()) }
+    // User data: CacheMaintenance never touches it, watchlist import/export neither.
+    single<ChartDrawingRepository> { RoomChartDrawingRepository(get()) }
     single {
         CacheMaintenance(
             get(), get(), get(), get(APP_SCOPE),

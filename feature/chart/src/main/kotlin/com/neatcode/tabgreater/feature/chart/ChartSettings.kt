@@ -22,7 +22,8 @@ enum class CandleType(val jsValue: String) {
 
 /**
  * The chart's user preferences. Global rather than per market: opening any
- * pair keeps the timeframe, the candle type, the y-axis scale and the indicator set you left.
+ * pair keeps the timeframe, the candle type, the y-axis scale, the indicator set and the drawing
+ * options you left. The drawings themselves are per market and live in Room.
  */
 @Serializable
 data class ChartSettings(
@@ -30,6 +31,10 @@ data class ChartSettings(
     val candleType: CandleType = CandleType.CANDLE_SOLID,
     val logScale: Boolean = false,
     val indicators: List<IndicatorSpec> = IndicatorCatalogue.defaults,
+    /** Snapping of drawing points to the bars; applies to new drawings and to every existing one. */
+    val magnetMode: MagnetMode = MagnetMode.WEAK,
+    /** "Show drawings": hides every user drawing without deleting it. */
+    val drawingsVisible: Boolean = true,
 ) {
     companion object {
         val DEFAULT = ChartSettings()

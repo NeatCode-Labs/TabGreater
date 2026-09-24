@@ -6,6 +6,7 @@ import com.neatcode.tabgreater.feature.chart.ChartPreferences
 import com.neatcode.tabgreater.feature.chart.ChartSettings
 import com.neatcode.tabgreater.feature.chart.IndicatorCatalogue
 import com.neatcode.tabgreater.feature.chart.IndicatorSpec
+import com.neatcode.tabgreater.feature.chart.MagnetMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -33,5 +34,13 @@ class FakeChartPreferences(initial: ChartSettings = ChartSettings.DEFAULT) : Cha
 
     override suspend fun setIndicators(indicators: List<IndicatorSpec>) {
         state.value = state.value.copy(indicators = IndicatorCatalogue.sanitize(indicators))
+    }
+
+    override suspend fun setMagnetMode(mode: MagnetMode) {
+        state.value = state.value.copy(magnetMode = mode)
+    }
+
+    override suspend fun setDrawingsVisible(visible: Boolean) {
+        state.value = state.value.copy(drawingsVisible = visible)
     }
 }

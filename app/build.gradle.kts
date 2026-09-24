@@ -148,14 +148,14 @@ dependencies {
  * `app/src/main/assets/chart/vendor/klinecharts.js` is copied byte-for-byte out of the KLineChart
  * npm release (see `docs/VENDORED-KLINECHART.md` for the tarball URL and the registry integrity hash).
  * Checking the digest on every build turns "we vendored upstream's file" from a claim in a README
- * into something the build itself enforces: nobody can quietly patch a 674 KB dependency, and a
+ * into something the build itself enforces: nobody can quietly patch the dependency, and a
  * reviewer — F-Droid's included — can verify the shipped bytes against the published release.
  *
  * Update both this map and `docs/VENDORED-KLINECHART.md` when the library is upgraded.
  */
 val vendoredAssets = mapOf(
     "src/main/assets/chart/vendor/klinecharts.js" to
-        "44dd99a21a637abc8bd398146e23581e862ede18702890f54ce200fab5d02ca6",
+        "41c3b8614708c2d26dc572d3910e9e6de19f9547b7b3325aff1f58a8e1b8938c",
 )
 
 val verifyVendoredAssets by tasks.registering {

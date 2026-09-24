@@ -3,6 +3,7 @@ package com.neatcode.tabgreater.feature.chart
 import androidx.webkit.JavaScriptExecutionException
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebViewOutcomeReceiver
+import com.neatcode.tabgreater.core.data.repo.ChartDrawingRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
@@ -23,6 +24,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -35,26 +37,30 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * The bridge halves that are pure Kotlin: the ready gate ([ChartBridge.awaitReady]) and the live
- * bar stream's pause/resume. The RPC replies themselves go through a main-looper `Handler`, which
+ * The bridge halves that are pure Kotlin: the ready gate ([ChartBridge.awaitReady]), the live
+ * bar stream's pause/resume and the drawing notices (persistence and [ChartBridge.drawingState]). The RPC replies themselves go through a main-looper `Handler`, which
  * the JVM stubs turn into a no-op, so they are covered by `ChartProtocolTest` instead.
  */
 class ChartBridgeTest {
 
     private lateinit var scope: CoroutineScope
     private lateinit var adapter: FakeAdapter
+    private lateinit var drawings: FakeDrawings
     private lateinit var bridge: ChartBridge
 
     @Before
     fun setUp() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         adapter = FakeAdapter()
+        drawings = FakeDrawings()
         bridge = ChartBridge(
             scope = scope,
             registry = ExchangeRegistry(listOf(adapter)),
             markets = FakeMarkets(BTC_EUR),
+            drawings = drawings,
         )
     }
 
@@ -150,6 +156,122 @@ class ChartBridgeTest {
         assertNull(withTimeoutOrNull(SHORT_MS) { adapter.subscriptions.receive() })
     }
 
+    // ------------------------------------------------------------------- drawings
+
+    @Test
+    fun `drawingsChanged persists the sanitised set under the canonical market key`() = runBlocking {
+        bridge.handle(drawingsChanged("binance", "BTC/EUR", "$SEGMENT,$UNKNOWN_TOOL"), NoReply)
+
+        val (key, json) = withTimeout(TIMEOUT_MS) { drawings.saved.receive() }
+        assertEquals(MarketKey("binance:BTC/EUR"), key)
+        val stored = DrawingsCodec.decode(json)
+        assertEquals(listOf("segment"), stored.map { it.name })
+        assertEquals(63120.5, stored.single().points.first().value!!, 0.0)
+    }
+
+    @Test
+    fun `saves keep the order the page reported them in`() = runBlocking {
+        bridge.handle(drawingsChanged("binance", "BTC/EUR", SEGMENT), NoReply)
+        bridge.handle(drawingsChanged("binance", "BTC/EUR", ""), NoReply)
+
+        withTimeout(TIMEOUT_MS) { drawings.saved.receive() }
+        val (_, last) = withTimeout(TIMEOUT_MS) { drawings.saved.receive() }
+        assertEquals("[]", last)
+    }
+
+    @Test
+    fun `drawingsChanged without a valid market is ignored`() = runBlocking {
+        bridge.handle(drawingsChanged("", "BTC/EUR", SEGMENT), NoReply)
+        bridge.handle(drawingsChanged("binance", "BTCEUR", SEGMENT), NoReply)
+        bridge.handle("""{"action":"drawingsChanged","payload":{"drawings":[]}}""", NoReply)
+
+        assertNull(withTimeoutOrNull(SHORT_MS) { drawings.saved.receive() })
+    }
+
+    @Test
+    fun `drawingState notices update the flow and reloads or market swaps reset it`() = runBlocking {
+        bridge.handle(
+            """{"action":"drawingState","payload":{"drawing":false,"tool":null,"selectedId":"o7",""" +
+                """"selectedName":"rect","selectedLocked":true,"count":3,"needsTextId":null}}""",
+            NoReply,
+        )
+        assertEquals(
+            DrawingState(selectedId = "o7", selectedName = "rect", selectedLocked = true, count = 3),
+            bridge.drawingState.value,
+        )
+
+        bridge.onMarketChanged()
+        assertEquals(DrawingState.IDLE, bridge.drawingState.value)
+
+        // Missing fields decode to their defaults.
+        bridge.handle("""{"action":"drawingState","payload":{"drawing":true,"tool":"segment"}}""", NoReply)
+        assertEquals(DrawingState(drawing = true, tool = "segment"), bridge.drawingState.value)
+
+        bridge.onPageStarted()
+        assertEquals(DrawingState.IDLE, bridge.drawingState.first())
+    }
+
+    @Test
+    fun `drawingState carries the text tool and the plot area the strip is placed against`() = runBlocking {
+        bridge.handle(
+            """{"action":"drawingState","payload":{"drawing":false,"selectedId":"o9","selectedName":"simpleTag",""" +
+                """"count":1,"needsTextId":"o9","needsTextTool":"simpleTag","visible":true,""" +
+                """"plotLeft":0,"plotBottom":452,"plotWidth":303,"legendBottom":39}}""",
+            NoReply,
+        )
+        val state = bridge.drawingState.value
+        assertEquals("simpleTag", state.needsTextTool)
+        assertEquals(0, state.plotLeft)
+        assertEquals(452, state.plotBottom)
+        assertEquals(303, state.plotWidth)
+        assertEquals(39, state.legendBottom)
+        assertEquals(true, state.busy)
+        assertEquals(false, DrawingState.IDLE.busy)
+    }
+
+    @Test
+    fun `drawingsPayloadFor reads Room and names the market the way the page does`() = runBlocking {
+        drawings.rows[BTC_EUR.key] = "[$SEGMENT]"
+
+        val payload = decodePayload(bridge.drawingsPayloadFor(BTC_EUR))
+
+        assertEquals("binance", payload.exchange)
+        assertEquals("BTC/EUR", payload.ticker)
+        assertEquals(listOf("segment"), payload.drawings.map { it.name })
+    }
+
+    @Test
+    fun `drawingsPayloadFor prefers the newest reported set over a save still in flight`() = runBlocking {
+        drawings.rows[BTC_EUR.key] = "[$SEGMENT]"
+        drawings.blockSaves = true
+
+        bridge.handle(drawingsChanged("binance", "BTC/EUR", ""), NoReply)
+
+        assertEquals(emptyList<Drawing>(), decodePayload(bridge.drawingsPayloadFor(BTC_EUR)).drawings)
+    }
+
+    @Test
+    fun `drawingsPayloadFor is empty for a market without drawings and applies the magnet`() = runBlocking {
+        assertEquals(emptyList<Drawing>(), decodePayload(bridge.drawingsPayloadFor(BTC_EUR)).drawings)
+
+        drawings.rows[BTC_EUR.key] = "[$SEGMENT]"
+        val restored = decodePayload(bridge.drawingsPayloadFor(BTC_EUR, MagnetMode.NONE)).drawings
+        assertEquals(listOf("normal"), restored.map { it.mode })
+    }
+
+    @Test
+    fun `a failing Room read restores nothing instead of crashing the swap`() = runBlocking {
+        drawings.failLoads = true
+        assertEquals(emptyList<Drawing>(), decodePayload(bridge.drawingsPayloadFor(BTC_EUR)).drawings)
+    }
+
+    private fun decodePayload(raw: String): DrawingsPayload =
+        ChartProtocol.json.decodeFromString(DrawingsPayload.serializer(), raw)
+
+    private fun drawingsChanged(exchange: String, ticker: String, drawingsJson: String): String =
+        """{"action":"drawingsChanged","payload":{"exchange":"$exchange","ticker":"$ticker",""" +
+            """"drawings":[$drawingsJson]}}"""
+
     private suspend fun awaitSubscription(): Pair<Timeframe, MarketKey> =
         withTimeout(TIMEOUT_MS) { adapter.subscriptions.receive() }
 
@@ -200,6 +322,33 @@ class ChartBridgeTest {
         override suspend fun search(query: String, limit: Int): List<Market> = emptyList()
     }
 
+    /** In-memory drawings; every save is also reported on [saved], in order. */
+    private class FakeDrawings : ChartDrawingRepository {
+        val rows = ConcurrentHashMap<MarketKey, String>()
+        val saved = Channel<Pair<MarketKey, String>>(Channel.UNLIMITED)
+
+        @Volatile
+        var blockSaves = false
+
+        @Volatile
+        var failLoads = false
+
+        override suspend fun load(key: MarketKey): String? {
+            check(!failLoads) { "disk unreadable" }
+            return rows[key]
+        }
+
+        override suspend fun save(key: MarketKey, drawingsJson: String, now: Long) {
+            if (blockSaves) awaitCancellation()
+            rows[key] = drawingsJson
+            saved.send(key to drawingsJson)
+        }
+
+        override suspend fun clear(key: MarketKey) {
+            rows.remove(key)
+        }
+    }
+
     /** `handle` needs a proxy for the reply path; the ready/subscribe cases never read it. */
     private object NoReply : JavaScriptReplyProxy() {
         override fun postMessage(message: String) = Unit
@@ -214,6 +363,10 @@ class ChartBridgeTest {
         const val TIMEOUT_MS = 5_000L
         const val SHORT_MS = 200L
         const val READY_MESSAGE = """{"action":"ready","payload":{}}"""
+        const val SEGMENT =
+            """{"name":"segment","points":[{"timestamp":1727100000000,"value":63120.5},""" +
+                """{"timestamp":1727200000000,"value":64000}],"lock":false,"mode":"weak_magnet","text":null}"""
+        const val UNKNOWN_TOOL = """{"name":"spaceship","points":[{"timestamp":1,"value":2}]}"""
 
         val BTC_EUR = Market(
             key = MarketKey.of(ExchangeId.BINANCE, "BTC", "EUR"),

@@ -24,9 +24,10 @@ There is **no rule about AI-assisted or LLM-generated code** in F-Droid's inclus
 
 ## The vendored chart library
 
-The app draws its chart with **KLineChart** (Apache-2.0) inside a WebView, so one JavaScript file
-ships in the assets. A *minified* bundle is what a reviewer objects to — it is not a readable,
-diffable form. That is handled, and the answer is short:
+The app draws its chart with **KLineChart** (Apache-2.0) inside a WebView, so its JavaScript bundle
+ships in the assets, next to a readable port of some KLineChart Pro drawing templates and the app's
+own page code. A *minified* bundle is what a reviewer objects to — it is not a readable, diffable
+form. That is handled, and the answer is short:
 
 - The asset is `app/src/main/assets/chart/vendor/klinecharts.js` — the **unminified** UMD build,
   copied byte-for-byte out of the upstream npm release.
@@ -35,6 +36,12 @@ diffable form. That is handled, and the answer is short:
 - `:app:verifyVendoredAssets` runs before every build and **fails it** if the file is not that exact
   release. The claim is enforced by the build, not by a promise in a README.
 - Nothing transforms the file, and no npm runs during the build.
+- `app/src/main/assets/chart/overlays.js` is third-party code too: 17 drawing templates of
+  **KLineChart Pro** (Apache-2.0), hand-ported from its TypeScript to plain JavaScript. It is
+  readable, commented source — the preferred form for modifying it — so it is not checksummed like
+  a vendored release; nothing is built or downloaded for it. Its provenance (upstream commit, the
+  blob SHA of every ported file) and the list of changes are in `docs/VENDORED-KLINECHART.md`,
+  "Adapted overlay templates".
 
 A reviewer may still hold that the preferred form is KLineChart's TypeScript source. If that comes
 up, the fallback is a `prebuild:` stanza building the bundle from a pinned checkout with a committed

@@ -11,8 +11,13 @@ KLineChart (https://github.com/klinecharts/KLineChart) — Apache License 2.0
 Copyright (c) 2019 lihu
   which includes: TradingView Lightweight Charts, Copyright (c) 2019 TradingView, Inc.
   Vendored at app/src/main/assets/chart/vendor/klinecharts.js — the unminified UMD build of
-  release 10.0.2, byte-for-byte from upstream, with its LICENSE and NOTICE kept verbatim.
+  release 10.0.3, byte-for-byte from upstream, with its LICENSE and NOTICE kept verbatim.
   Provenance and checksum: docs/VENDORED-KLINECHART.md (the build verifies it).
+
+KLineChart Pro overlay templates (https://github.com/klinecharts/pro) — Apache License 2.0
+Copyright the KLineChart Pro authors (author per package.json: liihuu; the upstream files carry no copyright line)
+  Ported to plain JavaScript at app/src/main/assets/chart/overlays.js from src/extension/*.ts at
+  commit 383722df91fed0ac0befe12cb87e67a2f112e121; the Apache-2.0 text is in LICENSES/Apache-2.0.txt.
 
 Righteous font (https://github.com/google/fonts/tree/main/ofl/righteous) — SIL Open Font License 1.1
 Copyright (c) 2011 by Brian J. Bonislawsky DBA Astigmatic, Reserved Font Name "Righteous"

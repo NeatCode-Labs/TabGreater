@@ -32,9 +32,9 @@ data class IndicatorSpec(
 
 /**
  * The 11 built-in indicators the app exposes, with the exact default
- * `calcParams` KLineChart 10.0.2 ships.
+ * `calcParams` KLineChart 10.0.3 ships.
  *
- * `ATR` and Heikin-Ashi do not exist in 10.0.2; `SMA` is a weighted average, not a simple one,
+ * `ATR` and Heikin-Ashi do not exist in 10.0.3; `SMA` is a weighted average, not a simple one,
  * so `MA` is the entry that carries the "moving average" role.
  */
 object IndicatorCatalogue {

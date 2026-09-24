@@ -11,6 +11,7 @@ import com.neatcode.tabgreater.core.exchange.mexc.MexcAdapter
 import com.neatcode.tabgreater.core.live.LiveDiagnostics
 import com.neatcode.tabgreater.core.live.LiveTickerLauncher
 import com.neatcode.tabgreater.core.model.ExchangeId
+import com.neatcode.tabgreater.feature.chart.ChartBridge
 import com.neatcode.tabgreater.ui.chart.ChartViewModel
 import com.neatcode.tabgreater.ui.manager.WatchlistManagerViewModel
 import com.neatcode.tabgreater.ui.search.TickerSearchViewModel
@@ -72,7 +73,12 @@ val appModule = module {
     viewModel { parameters -> TickerSearchViewModel(parameters.get(), get(), get(), get()) }
 
     // Likewise the chart's market key (also carried by the tabgreater://chart deep link).
-    viewModel { parameters -> ChartViewModel(parameters.get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { parameters ->
+        ChartViewModel(
+            parameters.get(), get(), get(), get(), get(), get(), get(),
+            drawingState = get<ChartBridge>().drawingState,
+        )
+    }
 }
 
 /** Adapter diagnostics go to logcat in debug builds only; release builds stay silent. */

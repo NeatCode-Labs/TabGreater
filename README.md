@@ -45,6 +45,12 @@ exchanges directly: there is no backend, no account and nothing is collected.
   indicators (MA, EMA, BOLL, SAR, VOL, MACD, RSI, KDJ, CCI, DMI, OBV),
   log / auto scale, fullscreen, share as PNG. You can pan back through history
   on most exchanges; Kraken's public API returns only its newest ~720 bars.
+- **Drawing tools** — 30 tools behind the pencil: trend lines, rays, horizontal
+  and vertical lines, channels, Fibonacci retracement / extension / fans,
+  Gann box, shapes, brush, wave patterns, text and tags. Tap a drawing to
+  select it, drag to move it, lock or delete it; a magnet snaps points to
+  candle prices. Drawings are kept per market and survive timeframe changes
+  and restarts.
 - **Widgets** — one pair per widget. Drops as 2 × 1 and resizes freely from
   110 × 40 dp up to 4 × 2 and beyond, always drawing the same layout. The
   sparkline is a switch, on by default, and always shows the last 24 h. Refresh

@@ -152,7 +152,8 @@ private val SIDE_MARGIN = 16.dp
 
 /** Every third-party component that ends up in the APK. */
 private val THIRD_PARTY = listOf(
-    "KLineChart 10.0.2 — Apache-2.0 — github.com/klinecharts/KLineChart",
+    "KLineChart 10.0.3 — Apache-2.0 — github.com/klinecharts/KLineChart",
+    "KLineChart Pro overlay templates — Apache-2.0 — github.com/klinecharts/pro",
     "Righteous font by Astigmatic — SIL Open Font License 1.1 — fonts.google.com/specimen/Righteous",
     "Popular pairs list — Powered by CoinGecko — coingecko.com",
     "Kotlin, kotlinx.coroutines, kotlinx.serialization — Apache-2.0 — kotlinlang.org",
