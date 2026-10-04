@@ -1,10 +1,19 @@
-# Submitting TabGreater to F-Droid
+# TabGreater on F-Droid
+
+**Status: live** at **https://f-droid.org/packages/com.neatcode.tabgreater/** since 26 September 2026
+(first listed version: 1.1.0, version code 6). The inclusion request,
+[fdroiddata!46639](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/46639), was opened on
+24 August 2026 and merged on 24 September 2026. The listing is a reproducible build: F-Droid ships
+the same APK as GitHub Releases, signed with the NeatCode Labs key.
+
+This document records how the submission was done and what keeps the listing working — see
+[Maintenance](#maintenance) for the part that matters on every release.
 
 F-Droid differs from every other store in the one way that decides the whole submission: it
 **builds the app itself, from source, on its own machines**. The work is not "package an APK" but
 "make the build reproduce on a machine that has never seen this project".
 
-The submission is a merge request against **https://gitlab.com/fdroid/fdroiddata** that adds a single
+The submission was a merge request against **https://gitlab.com/fdroid/fdroiddata** that added a single
 file, `metadata/com.neatcode.tabgreater.yml`. The listing text and images are read from *this*
 repository's fastlane layout (`metadata/en-US/`) — never put descriptions in fdroiddata.
 
@@ -75,7 +84,14 @@ PY
 ```
 
 For 1.0.0 all 1368 entries matched; the files differed only by the 4 096-byte APK Signing Block,
-which is exactly what `fdroid verify` strips before comparing. No `postbuild` fix was needed.
+which is exactly what `fdroid verify` strips before comparing. No `postbuild` fix was needed. Every
+release up to 1.1.0 was checked the same way while the merge request was open, with no mismatch.
+
+The published listing confirms the outcome: the 1.1.0 APK served from `f-droid.org/repo/` has the
+same SHA-256 as the GitHub release asset, and the package page states that it is built and signed by
+the original developer. F-Droid's own record of the check is the 1.1.0 build log,
+https://monitor.f-droid.org/builds/log/com.neatcode.tabgreater/6, which records "compared built
+binary to supplied reference binary successfully".
 
 ## The JDK trap
 
@@ -89,6 +105,14 @@ reproducible build. The project itself is therefore on JDK 21 (`gradle/libs.vers
 ## The recipe
 
 ```yaml
+AntiFeatures:
+  NonFreeNet:
+    en-US: Prices and candles are fetched from the public market-data APIs of Binance,
+      Gate.io, Kraken, KuCoin and MEXC, whose server software is not free. The add-pair
+      screen also queries CoinGecko's public ranking at most once a day for its "popular
+      pairs" chips; that call is optional and falls back to a cached or built-in list.
+      The app has no backend of its own, no account and no API keys, and works with
+      any subset of the five exchanges.
 Categories:
   - Market & Price
 License: GPL-3.0-or-later
@@ -106,9 +130,9 @@ Binaries:
   https://github.com/NeatCode-Labs/TabGreater/releases/download/v%v/TabGreater-%v-foss.apk
 
 Builds:
-  - versionName: 1.0.0
-    versionCode: 1
-    commit: 3a178be9037a49626a82e197343e9dd39cf1a6ab
+  - versionName: 1.1.0
+    versionCode: 6
+    commit: 0511d3e51454417365703970ee46488f88c48206
     subdir: app
     gradle:
       - foss
@@ -117,25 +141,32 @@ AllowedAPKSigningKeys: 71befee992ee607eabcdbc69542c7f7be4613c91171e599a47d4ea559
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.0
-CurrentVersionCode: 1
+CurrentVersion: 1.1.0
+CurrentVersionCode: 6
 ```
 
-That is the 1.0.0 entry; each later release appends another `Builds:` block and bumps
-`CurrentVersion`/`CurrentVersionCode`.
+That is the recipe as merged. It was filed for 1.0.0, and five more releases (1.0.1 to 1.1.0) went out
+while the merge request was open. 1.0.1 to 1.0.4 each added a `Builds:` block; after 1.0.4 the
+maintainer asked for old versions to be removed, and 1.1.0 then replaced the remaining block, so the
+merged recipe carries only the current one. The live file is
+[`metadata/com.neatcode.tabgreater.yml`](https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/com.neatcode.tabgreater.yml)
+in fdroiddata; later versions are added there, not here.
 
-Every one of these details was learned by having a CI job fail on it:
+Every one of these details was learned by having a CI job fail on it or a maintainer ask for it:
 
 | Field | Rule |
 | --- | --- |
+| `AntiFeatures` | Goes at the very top. An app that depends on non-free network services (here the exchanges' market-data APIs) is asked for `NonFreeNet` with a reason. `fdroid rewritemeta` re-wraps the prose at its own width, so copy the wrapping from the failing job's diff. |
 | `Categories` | Comes from a fixed schema list. `Money` is **not** in it; a price watchlist is `Market & Price`. The failing `schema validation` job prints the whole list. |
 | `AutoName` | Required — `checkupdates` regenerates the file and diffs it against yours. |
 | `Binaries` | Must be wrapped onto the next line (`Binaries: ` + newline + two-space indent). That is what `fdroid rewritemeta` emits, and it diffs against yours. |
 | `commit` | A **full commit hash**, never a tag or branch. The maintainer will ask. |
 | `gradle` | `[foss]` — the `play` flavour must never be built by F-Droid. |
-| `UpdateCheckMode` | `Tags` plus `AutoUpdateMode: Version` picks up new annotated tags without a metadata change. |
+| `UpdateCheckMode` | `Tags` plus `AutoUpdateMode: Version` makes F-Droid's update check add a build for each new annotated tag to the recipe itself, with no merge request from us. |
 
 ## Submitting
+
+Done once, kept as a record of what the process asks for.
 
 1. Fork **https://gitlab.com/fdroid/fdroiddata** (once).
 2. Branch off **upstream's** current `master`, not your fork's — a stale fork makes a noisy MR.
@@ -149,19 +180,27 @@ Every one of these details was learned by having a CI job fail on it:
    scripts`, `fdroid rewritemeta`, `fdroid lint`, `git redirect`, `checkupdates`, `fdroid build` and
    `check apk` (which scans the built APK for known non-free classes and extra signing blocks).
    Fix failures on the same branch — never open a second MR.
-6. Review takes weeks, not days.
+6. Review takes weeks, not days: this one took a month. Besides the recipe review, a volunteer did a
+   static review of the APK and source and a launch test in an emulator.
+7. If a new version is released while the request is open, update the recipe on the same branch and
+   say so in the merge request.
 
 Testing the recipe locally with `fdroid build` before opening the MR saves a round trip, but needs a
 Linux environment; the pipeline does the same job.
 
-## After acceptance
+## Maintenance
 
-- Every new **annotated tag** triggers a rebuild; nothing else is needed.
+- Every new **annotated tag** is picked up by F-Droid's update check (`UpdateCheckMode: Tags`), which
+  adds the build to the recipe; no merge request is needed for an ordinary release.
+- Publish the signed APK on GitHub Releases under the name the `Binaries:` pattern expects
+  (`TabGreater-<version>-foss.apk` on tag `v<version>`), or the reproducible-build comparison cannot
+  find it. Build it from a clean clone of the tag with JDK 21, so it matches what F-Droid builds.
 - Add `metadata/en-US/changelogs/<versionCode>.txt` in this repository for each release — that is the
   "What's New" F-Droid clients show.
-- Keep the app's release APK name matching the `Binaries:` pattern, or the reproducible-build
-  comparison cannot find it.
-- If the build recipe needs changing (new AGP, new NDK, a new prebuild step), that is a fresh merge
-  request against `fdroiddata`.
-- Watch https://f-droid.org/packages/com.neatcode.tabgreater/ after each tag: if a build breaks, the
-  new version simply never appears there, silently.
+- If the build recipe needs changing (new AGP, new NDK, a new prebuild step), that is a merge request
+  against the upstream `master` of `fdroiddata`.
+- Watch https://f-droid.org/packages/com.neatcode.tabgreater/ after each tag. A new version takes a
+  few days to appear: the update check has to notice the tag, then the build has to run and be
+  published. (1.1.0 came in with the inclusion merge on 24 September and was listed on 26 September
+  2026.) If a build breaks, or does not reproduce the published APK, the new version simply never
+  appears there, silently.

@@ -8,12 +8,14 @@
 
 <p align="center">
   <a href="https://github.com/NeatCode-Labs/TabGreater/releases/latest"><img src="https://img.shields.io/github/v/release/NeatCode-Labs/TabGreater?style=flat-square&amp;label=version&amp;color=blue" alt="Latest release"></a>
+  <a href="https://f-droid.org/packages/com.neatcode.tabgreater/"><img src="https://img.shields.io/f-droid/v/com.neatcode.tabgreater?style=flat-square&amp;label=F-Droid&amp;color=blue" alt="Version on F-Droid"></a>
   <a href="https://developer.android.com/about/versions/oreo"><img src="https://img.shields.io/badge/Android-8.0+-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8.0 or newer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square" alt="GPL-3.0-or-later license"></a>
   <a href="docs/PRIVACY.md"><img src="https://img.shields.io/badge/telemetry-none-success?style=flat-square" alt="No telemetry"></a>
 </p>
 
 <p align="center">
+  <a href="https://f-droid.org/packages/com.neatcode.tabgreater/"><img src="https://img.shields.io/badge/F--Droid-Download-1976D2?style=for-the-badge&amp;logo=f-droid" alt="Download from F-Droid"></a>
   <a href="https://github.com/NeatCode-Labs/TabGreater/releases/latest"><img src="https://img.shields.io/badge/GitHub-Download%20APK-181717?style=for-the-badge&amp;logo=github" alt="Download APK from GitHub"></a>
 </p>
 
@@ -76,12 +78,15 @@ exchanges directly: there is no backend, no account and nothing is collected.
 
 ## Installation
 
-Download the latest signed APK from **[tabgreater.com/download](https://tabgreater.com/download)** or
-straight from **[GitHub Releases](https://github.com/NeatCode-Labs/TabGreater/releases/latest)**. Every
-release lists the SHA-256 of the APK and of the signing certificate, so you can check what you
-downloaded.
+Install it from **[F-Droid](https://f-droid.org/packages/com.neatcode.tabgreater/)**, or download the
+latest signed APK from **[tabgreater.com/download](https://tabgreater.com/download)** or straight from
+**[GitHub Releases](https://github.com/NeatCode-Labs/TabGreater/releases/latest)**. Every release lists
+the SHA-256 of the APK and of the signing certificate, so you can check what you downloaded.
 
-An F-Droid submission is in review; this section will link it once it is live.
+F-Droid rebuilds each release from source, checks that the result matches the APK published on GitHub
+and then ships that same APK, signed with the NeatCode Labs key. You can therefore move between F-Droid
+and the GitHub download without uninstalling. A new release reaches F-Droid a few days after it is
+tagged.
 
 Android 8.0 (API 26) or newer. APK installs may require temporarily allowing
 your browser or file manager to install unknown apps.
