@@ -1,6 +1,6 @@
 # Privacy policy
 
-*TabGreater, by NeatCode Labs — last updated 2026-09-24*
+*TabGreater, by NeatCode Labs — last updated 2026-10-04*
 
 ## What TabGreater collects
 
@@ -8,13 +8,13 @@ Nothing. The app has no server, no account, no analytics, no crash reporting and
 
 ## What leaves your device
 
-TabGreater fetches prices and candles **directly** from the public market-data APIs of the exchanges you use (Binance, Gate.io, Kraken, KuCoin, MEXC). Each of those requests carries, as every internet request does, your IP address, and it names the trading pairs you are watching. The exchanges receive and process that information under their own terms of service and privacy policies; NeatCode Labs has no access to it and no control over it. All connections use HTTPS / WSS.
+TabGreater fetches prices and candles **directly** from the public market-data APIs of the exchanges you use (Binance, Gate.io, Kraken, KuCoin, MEXC). Each of those requests carries, as every internet request does, your IP address, and it names the trading pairs you are watching. The app also downloads the five exchanges' lists of markets, which the pair search runs on, at most once a day and again after an install or update; those requests name no pair, and what you type into the search never leaves the device. The exchanges receive and process that information under their own terms of service and privacy policies; NeatCode Labs has no access to it and no control over it. All connections use HTTPS / WSS.
 
-The "popular pairs" shortcuts on the add-pair screen and in the widget setup come from CoinGecko's public market-cap ranking (https://www.coingecko.com): the app asks for that list at most once a day, and that request, like any other, carries your IP address. Nothing else leaves the device. The chart runs in a WebView that loads only files bundled inside the app.
+The crypto "popular pairs" shortcuts on the add-pair screen and in the widget setup come from CoinGecko's public market-cap ranking (https://www.coingecko.com): the app asks for that list at most once a day, and that request, like any other, carries your IP address. The stock tickers offered under *Stocks* are ranked on the device from the exchanges' lists of markets. Nothing else leaves the device. The chart runs in a WebView that loads only files bundled inside the app.
 
 ## What stays on your device
 
-Watchlists, chart drawings (including any text you add to them), settings, widget configuration and the candle cache are stored in the app's private storage. If Android Backup is enabled on your phone, Android includes that storage in your Google account backup, like it does for other apps. "Export watchlists" writes a JSON file to a location you choose; TabGreater never reads it again unless you import it.
+Watchlists, chart drawings (including any text you add to them), settings, widget configuration, the exchanges' lists of markets and the candle cache are stored in the app's private storage. If Android Backup is enabled on your phone, Android includes that storage in your Google account backup, like it does for other apps. "Export watchlists" writes a JSON file to a location you choose; TabGreater never reads it again unless you import it.
 
 ## Permissions
 

@@ -1,0 +1,6 @@
+Tokenized stocks in the pair search.
+
+• "+ Add pair" and the widget setup have a Crypto | Stocks switch; Crypto, the default, no longer mixes in stock tokens
+• Stocks finds the tokens for a ticker such as TSLA across the exchanges, Kraken's included, with popular tickers one tap away
+• These are tokens on crypto exchanges, not stock-exchange quotes: prices can differ from the share price, and some trade only on weekdays
+• The widget setup hides its preview while you search

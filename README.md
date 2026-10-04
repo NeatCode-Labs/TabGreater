@@ -60,7 +60,18 @@ exchanges directly: there is no backend, no account and nothing is collected.
   three widgets at the default 5-minute cadence cost about 1.5 % battery a day.
 - **Quick add** — the five biggest coins that are not stablecoins or wrapped
   tokens are one tap away when you add a pair (ranking from CoinGecko,
-  refreshed daily).
+  refreshed daily); under *Stocks*, the eight tickers listed on the most
+  exchanges.
+- **Tokenized stocks** — "+ Add pair" and the widget setup have a
+  *Crypto | Stocks* switch. *Stocks* finds the stock tokens the five exchanges
+  list as spot pairs by the share's ticker: `TSLA` brings up the TSLA tokens
+  across the exchanges, such as `TSLAB/USDT` and `TSLAX/USDT`, and Kraken's
+  tokenized stocks (`AAPLX/USD`, …) are in the catalogue too.
+  *Crypto*, the default, leaves them out. On tiles, charts and widgets a stock
+  token works like any other pair. These are tokens trading on crypto
+  exchanges, not stock-exchange quotes: prices can differ from the share price
+  and between exchanges, some exchanges trade them only on weekdays, and
+  coverage is mostly US large caps and ETFs.
 - **Exchanges** — Binance, Gate.io, Kraken, KuCoin, MEXC (spot only).
 - **Dark theme**, en-US number formatting, "shrink zeros" for sub-cent prices
   (`0.0₄123`).
@@ -113,8 +124,10 @@ Read the complete **[Privacy policy](docs/PRIVACY.md)**.
 
 ## Disclaimer
 
-Prices are indicative and may be delayed, incomplete or wrong. TabGreater is
-**not financial advice** and executes no trades. Use it at your own risk.
+Prices are indicative and may be delayed, incomplete or wrong. Stock tokens are
+priced by trading on crypto exchanges and can differ from the share price.
+TabGreater is **not financial advice** and executes no trades. Use it at your
+own risk.
 
 ## Support
 
@@ -136,6 +149,19 @@ Donations keep the project going; they do not unlock anything in the app.
 
 Coinbase's market-data terms do not allow third-party apps to show their data
 to end users, so it is left out on purpose.
+
+</details>
+
+<details>
+<summary><b>Does TabGreater show stock prices?</b></summary>
+
+Not from a stock exchange. TabGreater reads only the exchanges' public APIs,
+with no API key. What the *Stocks* switch lists are tokenized stocks: tokens
+that track a share and that Binance, Gate.io, Kraken, KuCoin and MEXC list as
+spot pairs. Their price comes from trading on that exchange, so it can differ
+from the share price and from one exchange to the next. Some exchanges trade
+them around the clock, others only on weekdays; outside trading hours a tile
+keeps the last price. Coverage is mostly US large caps and ETFs.
 
 </details>
 
@@ -164,7 +190,9 @@ battery-optimisation permissions to comply with Play policy.
 
 From CoinGecko's public market-cap ranking, fetched at most once a day and
 cached on the device; stablecoins and wrapped tokens are filtered out. If the
-request fails, the app falls back to the last cached list.
+request fails, the app falls back to the last cached list. The tickers offered
+under *Stocks* are ranked on the device from the exchanges' market lists, by
+how many exchanges list each one; that takes no extra request.
 
 </details>
 

@@ -26,8 +26,8 @@ Two product flavours share the same code and package name and differ only in wha
 
 | Module | Contents |
 |---|---|
-| `:core:model` | pure Kotlin: `MarketKey` (`exchange:BASE/QUOTE`), `Ticker`, `Candle`, watchlist types, design tokens, number formatting, backup codec |
-| `:core:exchange` | pure Kotlin: `ExchangeAdapter` + Binance / Gate.io / Kraken / KuCoin / MEXC adapters, WebSocket plumbing, rate limiting, candle aggregation |
+| `:core:model` | pure Kotlin: `MarketKey` (`exchange:BASE/QUOTE`), `Market` with its `AssetClass` (crypto or tokenized stock), `Ticker`, `Candle`, watchlist types, design tokens, number formatting, backup codec |
+| `:core:exchange` | pure Kotlin: `ExchangeAdapter` + Binance / Gate.io / Kraken / KuCoin / MEXC adapters, stock-token classification of their catalogues (`StockTokens`), WebSocket plumbing, rate limiting, candle aggregation |
 | `:core:data` | Room (watchlists, markets, candle cache, ticker snapshots) and DataStore settings |
 | `:core:live` | live market data (WebSocket fan-in), the widget refresh service and its alarms |
 | `:feature:chart` | the KLineChart WebView bridge |

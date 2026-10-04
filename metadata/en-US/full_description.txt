@@ -28,6 +28,13 @@ TabGreater is a crypto watchlist for Android. It shows live spot prices from fiv
 * A refresh cadence of your choice, from timed updates to a live connection
 * No notification of any kind, and a measured cost of about 1.5 % of the battery per day for three widgets at the default five-minute cadence
 
+<b>Tokenized stocks</b>
+
+* A Crypto | Stocks switch when you add a pair or set up a widget; Crypto, the default, shows coins only
+* Stocks finds the stock tokens the five exchanges list as spot pairs by the share's ticker (TSLA brings up the TSLA tokens across the exchanges), with popular tickers one tap away
+* On tiles, charts and widgets a stock token works like any other pair
+* These are tokens trading on crypto exchanges, not stock-exchange quotes: prices can differ from the share price and between exchanges, some exchanges trade them only on weekdays, and coverage is mostly US large caps and ETFs
+
 <b>Exchanges</b>
 
 Spot markets from Binance, Gate.io, Kraken, KuCoin and MEXC. Exchange names are trademarks of their respective owners; TabGreater is not affiliated with, endorsed by or sponsored by any exchange.
