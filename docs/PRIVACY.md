@@ -1,6 +1,6 @@
 # Privacy policy
 
-*TabGreater, by NeatCode Labs — last updated 2026-08-23*
+*TabGreater, by NeatCode Labs — last updated 2026-09-24*
 
 ## What TabGreater collects
 
