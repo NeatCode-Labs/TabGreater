@@ -3,16 +3,20 @@ package com.neatcode.tabgreater.core.exchange.gate
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
+import com.neatcode.tabgreater.core.exchange.StockTokens
+import com.neatcode.tabgreater.core.exchange.classified
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.exchange.ws.ExchangeSocket
 import com.neatcode.tabgreater.core.exchange.ws.SocketState
 import com.neatcode.tabgreater.core.exchange.ws.SubscriptionBook
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Ticker
 import com.neatcode.tabgreater.core.model.Timeframe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -86,7 +90,9 @@ class GateAdapter(
     // pair list alone is ~2 200 entries.
     override suspend fun listMarkets(): List<Market> = withContext(Dispatchers.IO) {
         val pairs = json.decodeFromString<List<CurrencyPairDto>>(get(PATH_CURRENCY_PAIRS))
-        pairs.asSequence()
+        // Asked for only once the pairs are in, so a blocked region still fails on the first call.
+        val categories = currencyCategories()
+        val markets = pairs.asSequence()
             .filter { it.tradeStatus == STATUS_TRADABLE }
             // Gate lists pairs with non-ASCII bases (e.g. "龙虾_USDT") that no other layer can key.
             .filter { SYMBOL_PART.matches(it.base) && SYMBOL_PART.matches(it.quote) }
@@ -96,9 +102,63 @@ class GateAdapter(
                     nativeSymbol = dto.id,
                     pricePrecision = dto.precision.coerceAtLeast(0),
                     tickSize = tickSizeOf(dto.precision),
-                )
+                ).classified(stockUnderlyingOf(dto, categories))
             }
             .toList()
+        withLeveragedStocks(markets, categories)
+    }
+
+    /**
+     * `category` per currency from `/spot/currencies` (~2 MB, the only place Gate marks stock tokens),
+     * or `null` when that call fails twice: the catalogue must not depend on it, so stock tokens then
+     * fall back to what their pair names give away. The second attempt matters because the result is
+     * stored as a fresh catalogue for a day, so a one-off failure would otherwise last that long.
+     */
+    private suspend fun currencyCategories(): Map<String, List<String>>? {
+        repeat(CURRENCIES_ATTEMPTS) { attempt ->
+            try {
+                return json.decodeFromString<List<CurrencyDto>>(get(PATH_CURRENCIES))
+                    .associate { it.currency to it.category.orEmpty() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger("${id.id}: currencies attempt ${attempt + 1} failed: ${e.message}")
+            }
+        }
+        logger("${id.id}: stock tokens are classified by name")
+        return null
+    }
+
+    /** A currency missing from the list (none was on 2026-10-04) is judged by name, like a failed call. */
+    private fun stockUnderlyingOf(dto: CurrencyPairDto, categories: Map<String, List<String>>?): String? {
+        val known = categories?.get(dto.base) ?: return StockTokens.gateByName(dto.base, dto.baseName.orEmpty())
+        return StockTokens.gate(dto.base, known)
+    }
+
+    /**
+     * Gate's leveraged tokens carry no category, so one on a share (`TSLA3L`) is moved to the stocks
+     * here. Its root may be any share Gate knows: one just classified, or any stock currency in
+     * [categories], tradable or not (`NOK3L` trades while no NOK token does). A root that is also
+     * one of Gate's coins is not a share root: `QNT3L` tracks QNT (Quant), not the `QNTG` share, as
+     * Gate gives a colliding share a perpetual of its own (`QNTX_USDT`).
+     */
+    private fun withLeveragedStocks(markets: List<Market>, categories: Map<String, List<String>>?): List<Market> {
+        val roots = HashSet<String>()
+        val coins = HashSet<String>()
+        markets.mapNotNullTo(roots) { it.underlying }
+        categories?.forEach { (currency, tags) ->
+            val share = StockTokens.gate(currency, tags)
+            if (share != null) roots += share.uppercase() else coins += currency.uppercase()
+        }
+        roots -= coins
+        if (roots.isEmpty()) return markets
+        return markets.map { market ->
+            if (market.assetClass == AssetClass.STOCK) {
+                market
+            } else {
+                market.classified(StockTokens.gateLeveraged(market.base, roots))
+            }
+        }
     }
 
     /**
@@ -436,10 +496,12 @@ class GateAdapter(
 
         private const val MAX_CANDLES = 1000
         private const val MAX_PAIRS_PER_FRAME = 50
+        private const val CURRENCIES_ATTEMPTS = 2
         private const val MIN_SEND_GAP_MS = 100L
         private const val MILLIS_PER_SECOND = 1000L
 
         private const val PATH_CURRENCY_PAIRS = "/api/v4/spot/currency_pairs"
+        private const val PATH_CURRENCIES = "/api/v4/spot/currencies"
         private const val PATH_TICKERS = "/api/v4/spot/tickers"
         private const val PATH_CANDLESTICKS = "/api/v4/spot/candlesticks"
         private const val PARAM_CURRENCY_PAIR = "currency_pair"
@@ -503,6 +565,15 @@ private data class CurrencyPairDto(
     /** Price decimals, e.g. `1` for BTC_USDT and `9` for PEPE_USDT. */
     val precision: Int = 0,
     @SerialName("trade_status") val tradeStatus: String = "",
+    /** `"Tesla xStock"`, `"Apple Ondo Tokenized"`: the stock marker of last resort. */
+    @SerialName("base_name") val baseName: String? = null,
+)
+
+/** `GET /spot/currencies` row; `category` is e.g. `["stocks","xstocks"]` and may be absent. */
+@Serializable
+private data class CurrencyDto(
+    val currency: String = "",
+    val category: List<String>? = null,
 )
 
 /** Shared by `GET /spot/tickers` and the `spot.tickers` stream — Gate sends the same fields on both. */

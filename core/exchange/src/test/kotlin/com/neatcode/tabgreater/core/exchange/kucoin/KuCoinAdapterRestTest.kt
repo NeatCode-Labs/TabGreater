@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.core.exchange.kucoin
 
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
@@ -68,9 +69,31 @@ class KuCoinAdapterRestTest {
         val noIncrement = markets.first { it.nativeSymbol == "NOI-USDT" }
         assertEquals(8, noIncrement.pricePrecision)
         assertNull(noIncrement.tickSize)
+        assertTrue(markets.all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
 
         val request = server.takeRequest()
         assertEquals("/api/v2/symbols", request.url.encodedPath)
+    }
+
+    @Test
+    fun `listMarkets tags the Stocks market and the stray SpaceX xStock`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_SYMBOLS).build())
+
+        val markets = adapter.listMarkets().associateBy { it.nativeSymbol }
+
+        val tsla = markets.getValue("TSLAX-USDT")
+        assertEquals(AssetClass.STOCK, tsla.assetClass)
+        assertEquals("TSLA", tsla.underlying)
+        assertEquals(MarketKey.of(ExchangeId.KUCOIN, "TSLAX", "USDT"), tsla.key)
+        // Filed under "USDS", but an xStock all the same.
+        val spaceX = markets.getValue("SPCXX-USDT")
+        assertEquals(AssetClass.STOCK, spaceX.assetClass)
+        assertEquals("SPCX", spaceX.underlying)
+        // An X suffix alone is no marker.
+        for (symbol in listOf("AVAX-USDT", "TRX-USDT", "WMTX-USDT", "NOMARKET-USDT")) {
+            assertEquals(symbol, AssetClass.CRYPTO, markets.getValue(symbol).assetClass)
+            assertNull(symbol, markets.getValue(symbol).underlying)
+        }
     }
 
     @Test
@@ -322,6 +345,23 @@ class KuCoinAdapterRestTest {
           {"symbol":"WE.IRD-USDT","baseCurrency":"WE.IRD","quoteCurrency":"USDT","priceIncrement":"0.01",
            "enableTrading":true},
           {"symbol":"NOI-USDT","baseCurrency":"NOI","quoteCurrency":"USDT","enableTrading":true}
+        ]}
+        """
+
+        const val STOCK_SYMBOLS = """
+        {"code":"200000","data":[
+          {"symbol":"TSLAX-USDT","name":"TSLAX-USDT","baseCurrency":"TSLAX","quoteCurrency":"USDT","feeCurrency":"USDT",
+           "market":"Stocks","priceIncrement":"0.01","enableTrading":true,"feeCategory":2},
+          {"symbol":"SPCXX-USDT","baseCurrency":"SPCXX","quoteCurrency":"USDT","market":"USDS","priceIncrement":"0.01",
+           "enableTrading":true},
+          {"symbol":"AVAX-USDT","baseCurrency":"AVAX","quoteCurrency":"USDT","market":"USDS","priceIncrement":"0.001",
+           "enableTrading":true},
+          {"symbol":"TRX-USDT","baseCurrency":"TRX","quoteCurrency":"USDT","market":"USDS","priceIncrement":"0.0001",
+           "enableTrading":true},
+          {"symbol":"WMTX-USDT","baseCurrency":"WMTX","quoteCurrency":"USDT","market":"ALTS","priceIncrement":"0.0001",
+           "enableTrading":true},
+          {"symbol":"NOMARKET-USDT","baseCurrency":"NOMARKET","quoteCurrency":"USDT","priceIncrement":"0.01",
+           "enableTrading":true}
         ]}
         """
 

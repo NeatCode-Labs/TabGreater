@@ -15,6 +15,8 @@ internal data class SymbolDto(
     val quoteCurrency: String = "",
     val priceIncrement: String? = null,
     val enableTrading: Boolean = false,
+    /** KuCoin's own grouping: `"USDS"`, `"BTC"`, `"Stocks"` (its xStocks), ... */
+    val market: String? = null,
 )
 
 /** `/api/v1/market/stats`; an unknown symbol answers HTTP 200 with every value `null`. */

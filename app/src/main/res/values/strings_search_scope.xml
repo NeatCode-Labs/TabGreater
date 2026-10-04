@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ticker search: the "Crypto | Stocks" scope -->
+    <string name="search_scope_crypto">Crypto</string>
+    <string name="search_scope_stocks">Stocks</string>
+    <string name="search_scope_stocks_caption">Tokenized stocks on crypto exchanges. Prices can differ from the share price.</string>
+    <string name="search_scope_stocks_hint">Search stock tokens by ticker, e.g. TSLA</string>
+    <!-- The search field's placeholder in the Stocks scope -->
+    <string name="search_scope_stocks_placeholder">Search ticker, e.g. TSLA</string>
+    <!-- Under "No markets match"; %1$s is the count, "100+" above the cap. Tapping switches the scope. -->
+    <plurals name="search_scope_matches_crypto">
+        <item quantity="one">%1$s match in Crypto</item>
+        <item quantity="other">%1$s matches in Crypto</item>
+    </plurals>
+    <plurals name="search_scope_matches_stocks">
+        <item quantity="one">%1$s match in Stocks</item>
+        <item quantity="other">%1$s matches in Stocks</item>
+    </plurals>
+</resources>

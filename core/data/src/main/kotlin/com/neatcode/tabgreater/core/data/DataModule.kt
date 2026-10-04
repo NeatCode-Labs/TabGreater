@@ -32,6 +32,7 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.StringQualifier
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -89,7 +90,12 @@ val dataModule = module {
     single { PopularPairsRepository(get(), get()) }
 
     single<WatchlistRepository> { RoomWatchlistRepository(get(), get(), get()) }
-    single<MarketRepository> { RoomMarketRepository(get(), get()) }
+    single<MarketRepository> {
+        // The APK is rewritten by every install and update, so its timestamp marks the point
+        // before which the cached instrument lists were classified by an older build.
+        val apk = File(androidContext().applicationInfo.sourceDir)
+        RoomMarketRepository(get(), get(), catalogueValidSince = { apk.lastModified() })
+    }
     single<SparklineRepository> { RoomSparklineRepository(get(), get(), get()) }
     // User data: CacheMaintenance never touches it, watchlist import/export neither.
     single<ChartDrawingRepository> { RoomChartDrawingRepository(get()) }

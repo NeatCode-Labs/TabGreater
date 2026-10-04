@@ -3,6 +3,7 @@ package com.neatcode.tabgreater.core.exchange.kraken
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
@@ -14,6 +15,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.SocketEffect
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -21,6 +23,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 
 class KrakenAdapterRestTest {
 
@@ -56,6 +59,7 @@ class KrakenAdapterRestTest {
     @Test
     fun `listMarkets aliases XBT and XDG, keeps only online pairs and reads Kraken's precision`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(200).body(EMPTY_RESULT).build())
 
         val markets = adapter.listMarkets()
 
@@ -72,10 +76,146 @@ class KrakenAdapterRestTest {
         assertEquals("XDGEUR", doge.nativeSymbol)
         assertEquals(7, doge.pricePrecision)
         assertEquals(1e-7, doge.tickSize!!, 1e-15)
+        // The crypto catalogue only ever holds coins.
+        assertTrue(markets.all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
 
+        // The crypto catalogue request is unchanged: no parameters at all.
         val request = server.takeRequest()
         assertEquals("/0/public/AssetPairs", request.url.encodedPath)
         assertNull(request.url.query)
+        assertEquals("/0/public/AssetPairs?aclass_base=tokenized_asset", server.takeRequest().target)
+    }
+
+    @Test
+    fun `listMarkets adds the share-equivalent tokenized pairs as stocks`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(200).body(TOKENIZED_PAIRS).build())
+
+        val markets = adapter.listMarkets()
+
+        // post_only is a closed stock market and still listed; for coins it stays excluded (POST/EUR).
+        // The SPV twins, the cancel_only token and BRK.Bx (a dot in its base) are dropped.
+        assertEquals(
+            listOf(
+                "kraken:BTC/EUR", "kraken:ETH/BTC", "kraken:DOGE/EUR", "kraken:ADA/EUR",
+                "kraken:AAPLX/USD", "kraken:AMDX/USD", "kraken:TQQQX/USD",
+            ),
+            markets.map { it.key.value },
+        )
+        val apple = markets.first { it.key.value == "kraken:AAPLX/USD" }
+        // The share-equivalent id, as Ticker and OHLC need it; the canonical key is upper-cased.
+        assertEquals("AAPLxUSD", apple.nativeSymbol)
+        assertEquals(AssetClass.STOCK, apple.assetClass)
+        assertEquals("AAPL", apple.underlying)
+        assertEquals(2, apple.pricePrecision)
+        assertEquals(0.01, apple.tickSize!!, 1e-12)
+        val amd = markets.first { it.key.value == "kraken:AMDX/USD" }
+        assertEquals("AMDxUSD", amd.nativeSymbol)
+        assertEquals("AMD", amd.underlying)
+        assertEquals(4, markets.first { it.key.value == "kraken:TQQQX/USD" }.pricePrecision)
+        assertTrue(markets.none { it.nativeSymbol.contains("SPV") })
+        assertTrue(markets.take(4).all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
+
+        assertNull(server.takeRequest().url.query)
+        val tokenized = server.takeRequest()
+        assertEquals("/0/public/AssetPairs", tokenized.url.encodedPath)
+        assertEquals("tokenized_asset", tokenized.url.queryParameter("aclass_base"))
+    }
+
+    @Test
+    fun `listMarkets returns the crypto markets when Kraken refuses the tokenized class`() = runTest {
+        val logs = ArrayList<String>()
+        val logging = loggingAdapter(logs)
+        server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        // Kraken's live answer to an asset class it does not offer.
+        server.enqueue(MockResponse.Builder().code(200).body(INVALID_ARGUMENTS_ERROR).build())
+
+        val markets = logging.listMarkets()
+
+        assertEquals(
+            listOf("kraken:BTC/EUR", "kraken:ETH/BTC", "kraken:DOGE/EUR", "kraken:ADA/EUR"),
+            markets.map { it.key.value },
+        )
+        assertEquals(2, server.requestCount)
+        // Logged, not silent: a missing Stocks catalogue must be traceable.
+        assertTrue(logs.toString(), logs.any { it.contains("EGeneral:Invalid arguments") })
+    }
+
+    /** Not offered in this region: the stocks could not be served there anyway, the coins still can. */
+    @Test
+    fun `listMarkets returns the crypto markets when the tokenized catalogue is blocked in this region`() = runTest {
+        val logs = ArrayList<String>()
+        val logging = loggingAdapter(logs)
+        server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(451).body("blocked").build())
+
+        val markets = logging.listMarkets()
+
+        assertEquals(
+            listOf("kraken:BTC/EUR", "kraken:ETH/BTC", "kraken:DOGE/EUR", "kraken:ADA/EUR"),
+            markets.map { it.key.value },
+        )
+        assertTrue(logs.toString(), logs.any { it.contains("HTTP 451") })
+    }
+
+    /** Kraken's retryable outages arrive with HTTP 200 as well; none of them says the class is gone. */
+    @Test
+    fun `listMarkets fails when the tokenized catalogue hits a temporary Kraken error`() = runTest {
+        for (code in listOf("EService:Unavailable", "EGeneral:Internal error")) {
+            server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+            server.enqueue(MockResponse.Builder().code(200).body("""{"error":["$code"]}""").build())
+
+            val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
+
+            assertTrue("expected ExchangeHttpException for $code, got $error", error is ExchangeHttpException)
+            assertTrue(error!!.message!!, error.message!!.contains(code))
+        }
+        assertEquals(4, server.requestCount)
+    }
+
+    /** A crypto-only answer would make the repository delete every stored Kraken stock row. */
+    @Test
+    fun `listMarkets fails when the tokenized catalogue does not arrive`() = runTest {
+        // No transparent retry, so the dropped connection reaches the adapter as it would in the field.
+        val noRetry = client.newBuilder().retryOnConnectionFailure(false).build()
+        val dropping = KrakenAdapter(
+            client = noRetry,
+            scope = scope,
+            restBase = server.url("/").toString(),
+            restBucket = TokenBucket(capacity = 64.0, refillPerSecond = 10_000.0),
+        )
+        server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        server.enqueue(
+            MockResponse.Builder().code(200).body(TOKENIZED_PAIRS)
+                .onResponseStart(SocketEffect.ShutdownConnection).build(),
+        )
+
+        val error = runCatching { dropping.listMarkets() }.exceptionOrNull()
+
+        assertTrue("expected IOException, got $error", error is IOException)
+    }
+
+    @Test
+    fun `listMarkets fails when the tokenized catalogue gets an http error`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(503).body("EService:Unavailable").build())
+
+        val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
+
+        assertTrue("expected ExchangeHttpException, got $error", error is ExchangeHttpException)
+        assertEquals(503, (error as ExchangeHttpException).code)
+    }
+
+    @Test
+    fun `listMarkets fails when the tokenized catalogue is throttled`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
+        // Kraken's throttle arrives as an `E` error with HTTP 200, but it says nothing about the class.
+        server.enqueue(MockResponse.Builder().code(200).body(RATE_LIMIT_ERROR).build())
+
+        val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
+
+        assertTrue("expected ExchangeHttpException, got $error", error is ExchangeHttpException)
+        assertTrue(error!!.message!!, error.message!!.contains("rate limit"))
     }
 
     @Test
@@ -86,7 +226,10 @@ class KrakenAdapterRestTest {
             listOf(market("XXBTZEUR", "BTC", "EUR"), market("ADAEUR", "ADA", "EUR")),
         )
 
-        assertEquals("XXBTZEUR,ADAEUR", server.takeRequest().url.queryParameter("pair"))
+        val request = server.takeRequest()
+        assertEquals("XXBTZEUR,ADAEUR", request.url.queryParameter("pair"))
+        // The exact request line crypto pairs have always been fetched with; stock tokens must not change it.
+        assertEquals("/0/public/Ticker?pair=XXBTZEUR%2CADAEUR", request.target)
         val btc = tickers.first { it.key == MarketKey.of(ExchangeId.KRAKEN, "BTC", "EUR") }
         assertEquals(65908.90, btc.last, 1e-9)
         assertEquals(65926.10, btc.bid!!, 1e-9)
@@ -111,11 +254,118 @@ class KrakenAdapterRestTest {
         assertTrue(adapter.fetchTickers(markets).isEmpty())
 
         assertEquals(2, server.requestCount)
-        val chunkSizes = (1..2).map { server.takeRequest() }.map { request ->
+        val requests = (1..2).map { server.takeRequest() }
+        val chunkSizes = requests.map { request ->
             assertEquals("/0/public/Ticker", request.url.encodedPath)
             request.url.queryParameter("pair")!!.split(",").size
         }
         assertEquals(listOf(100, 50), chunkSizes)
+        // Only `pair`, exactly as before stock tokens existed.
+        val expected = listOf(1..100, 101..150).map { range ->
+            "/0/public/Ticker?pair=" + range.joinToString("%2C") { "C${it}EUR" }
+        }
+        assertEquals(expected, requests.map { it.target })
+    }
+
+    /** Kraken answers a call mixing the two classes with an `E` error next to a partial result. */
+    @Test
+    fun `fetchTickers asks for crypto pairs and stock tokens in separate calls`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(TICKERS).build())
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_TICKERS).build())
+
+        val tickers = adapter.fetchTickers(
+            listOf(market("XXBTZEUR", "BTC", "EUR"), AAPLX_USD, market("ADAEUR", "ADA", "EUR"), AMDX_USD),
+        )
+
+        // Crypto first, byte for byte the request it has always been; then the stock tokens.
+        assertEquals("/0/public/Ticker?pair=XXBTZEUR%2CADAEUR", server.takeRequest().target)
+        val stocks = server.takeRequest()
+        assertEquals("/0/public/Ticker", stocks.url.encodedPath)
+        assertEquals("AAPLxUSD,AMDxUSD", stocks.url.queryParameter("pair"))
+        assertEquals("tokenized_asset", stocks.url.queryParameter("asset_class"))
+        assertEquals(2, server.requestCount)
+
+        assertEquals(4, tickers.size)
+        val apple = tickers.first { it.key == AAPLX_USD.key }
+        assertEquals("kraken:AAPLX/USD", apple.key.value)
+        assertEquals(333.33, apple.last, 1e-9)
+        assertEquals(333.26, apple.bid!!, 1e-9)
+        assertEquals(335.02, apple.high24h!!, 1e-9)
+        assertEquals(633.05, tickers.first { it.key == AMDX_USD.key }.last, 1e-9)
+        assertEquals(65908.90, tickers.first { it.key.value == "kraken:BTC/EUR" }.last, 1e-9)
+    }
+
+    @Test
+    fun `a failing stock token call still yields the crypto tickers`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(TICKERS).build())
+        server.enqueue(MockResponse.Builder().code(200).body(INVALID_ARGUMENTS_ERROR).build())
+
+        val tickers = adapter.fetchTickers(
+            listOf(market("XXBTZEUR", "BTC", "EUR"), market("ADAEUR", "ADA", "EUR"), AAPLX_USD),
+        )
+
+        assertEquals(listOf("kraken:ADA/EUR", "kraken:BTC/EUR"), tickers.map { it.key.value }.sorted())
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `a failing crypto call still fails fetchTickers`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(UNKNOWN_PAIR_ERROR).build())
+
+        val error = runCatching {
+            adapter.fetchTickers(listOf(market("XXBTZEUR", "BTC", "EUR"), AAPLX_USD))
+        }.exceptionOrNull()
+
+        // Unchanged behaviour: the caller sees the failure, and the stock call is never made.
+        assertTrue("expected ExchangeHttpException, got $error", error is ExchangeHttpException)
+        assertEquals(1, server.requestCount)
+    }
+
+    /** A token Kraken has since delisted must not cost the other stock tiles of its call their prices. */
+    @Test
+    fun `stock tickers answered in part keep the pairs Kraken still lists`() = runTest {
+        val logs = ArrayList<String>()
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_TICKERS_IN_PART).build())
+
+        val tickers = loggingAdapter(logs).fetchTickers(listOf(AAPLX_USD, stock("GONE")))
+
+        assertEquals(listOf("kraken:AAPLX/USD"), tickers.map { it.key.value })
+        assertEquals(333.20, tickers.single().last, 1e-9)
+        assertTrue(logs.toString(), logs.any { it.contains("EQuery:Unknown asset pair") })
+    }
+
+    @Test
+    fun `crypto tickers answered in part still fail as before`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(CRYPTO_TICKERS_IN_PART).build())
+
+        val error = runCatching {
+            adapter.fetchTickers(listOf(market("XXBTZEUR", "BTC", "EUR"), market("GONEEUR", "GONE", "EUR")))
+        }.exceptionOrNull()
+
+        assertTrue("expected ExchangeHttpException, got $error", error is ExchangeHttpException)
+    }
+
+    /** Recorded live on 2026-10-04: ADBEx had no trade at all, CRWVx one trade and an empty book. */
+    @Test
+    fun `a stock token's zeros are missing prices, not real ones`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(ZERO_TICKER).build())
+        server.enqueue(MockResponse.Builder().code(200).body(ZERO_STOCK_TICKERS).build())
+        val crwv = stock("CRWV")
+
+        val tickers = adapter.fetchTickers(listOf(market("NEWEUR", "NEW", "EUR"), stock("ADBE"), crwv))
+
+        // ADBEx gets no ticker at all, so its tile keeps the chart's last close instead of 0.00.
+        assertEquals(listOf("kraken:CRWVX/USD", "kraken:NEW/EUR"), tickers.map { it.key.value }.sorted())
+        val traded = tickers.first { it.key == crwv.key }
+        assertEquals(86.96, traded.last, 1e-9)
+        assertEquals(86.96, traded.high24h!!, 1e-9)
+        assertEquals(86.96, traded.low24h!!, 1e-9)
+        assertNull(traded.bid)
+        assertNull(traded.ask)
+        // Crypto values pass through exactly as before.
+        val coin = tickers.first { it.key.value == "kraken:NEW/EUR" }
+        assertEquals(0.0, coin.last, 0.0)
+        assertEquals(0.0, coin.bid!!, 0.0)
     }
 
     @Test
@@ -149,6 +399,24 @@ class KrakenAdapterRestTest {
         assertEquals("15", request.url.queryParameter("interval"))
         // `since` only trims the head of a window Kraken caps at 720 bars anyway.
         assertNull(request.url.queryParameter("since"))
+        assertEquals("/0/public/OHLC?pair=XXBTZEUR&interval=15", request.target)
+    }
+
+    @Test
+    fun `fetchOHLCV asks for a stock token with its asset class`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_OHLC).build())
+
+        val candles = adapter.fetchOHLCV(AAPLX_USD, Timeframe.M15, null, 720)
+
+        assertEquals(listOf(1791117900000L, 1791118800000L), candles.map { it.openTime })
+        assertEquals(333.33, candles.last().close, 1e-9)
+        assertEquals(listOf(true, false), candles.map { it.closed })
+        val request = server.takeRequest()
+        assertEquals("/0/public/OHLC", request.url.encodedPath)
+        assertEquals("AAPLxUSD", request.url.queryParameter("pair"))
+        assertEquals("15", request.url.queryParameter("interval"))
+        // Without it Kraken answers `EGeneral:Invalid arguments`.
+        assertEquals("tokenized_asset", request.url.queryParameter("asset_class"))
     }
 
     @Test
@@ -280,6 +548,23 @@ class KrakenAdapterRestTest {
         pricePrecision = 2,
     )
 
+    /** A stored Kraken stock token on [ticker], e.g. `kraken:CRWVX/USD` with pair id `CRWVxUSD`. */
+    private fun stock(ticker: String) = Market(
+        key = MarketKey.of(ExchangeId.KRAKEN, "${ticker}x", "USD"),
+        nativeSymbol = "${ticker}xUSD",
+        pricePrecision = 2,
+        assetClass = AssetClass.STOCK,
+        underlying = ticker,
+    )
+
+    private fun loggingAdapter(logs: MutableList<String>) = KrakenAdapter(
+        client = client,
+        scope = scope,
+        restBase = server.url("/").toString(),
+        logger = { logs += it },
+        restBucket = TokenBucket(capacity = 64.0, refillPerSecond = 10_000.0),
+    )
+
     /** Three bars; [last] is Kraken's newest committed bar, `null` renders a result without it. */
     private fun ohlc(last: Long?) = """
         {"error":[],"result":{"XXBTZEUR":[
@@ -340,7 +625,112 @@ class KrakenAdapterRestTest {
           "l":["1.0","1.0"],"h":["1.0","1.0"],"o":"0.00000000"}}}
         """
 
+        /**
+         * Shaped like the live `aclass_base=tokenized_asset` catalogue of 2026-10-04: every share is
+         * listed twice under one `altname`, as the share-equivalent id and as its SPV twin.
+         */
+        const val TOKENIZED_PAIRS = """
+        {"error":[],"result":{
+          "AAPLSPVUSD":{"altname":"AAPLxUSD","wsname":"AAPLx/USD","aclass_base":"tokenized_asset",
+            "base":"AAPLx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":2,"tick_size":"0.01",
+            "status":"online"},
+          "AAPLxUSD":{"altname":"AAPLxUSD","wsname":"AAPLx/USD","aclass_base":"tokenized_asset",
+            "base":"AAPLx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":2,"tick_size":"0.01",
+            "status":"online"},
+          "AMDSPVUSD":{"altname":"AMDxUSD","wsname":"AMDx/USD","aclass_base":"tokenized_asset",
+            "base":"AMDx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":2,"tick_size":"0.01",
+            "status":"post_only"},
+          "AMDxUSD":{"altname":"AMDxUSD","wsname":"AMDx/USD","aclass_base":"tokenized_asset",
+            "base":"AMDx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":2,"tick_size":"0.01",
+            "status":"post_only"},
+          "TQQQxUSD":{"altname":"TQQQxUSD","wsname":"TQQQx/USD","aclass_base":"tokenized_asset",
+            "base":"TQQQx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":4,"tick_size":"0.01",
+            "status":"post_only"},
+          "HALTxUSD":{"altname":"HALTxUSD","wsname":"HALTx/USD","aclass_base":"tokenized_asset",
+            "base":"HALTx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":2,"tick_size":"0.01",
+            "status":"cancel_only"},
+          "BRK.BxUSD":{"altname":"BRK.BxUSD","wsname":"BRK.Bx/USD","aclass_base":"tokenized_asset",
+            "base":"BRK.Bx","aclass_quote":"currency","quote":"ZUSD","pair_decimals":2,"tick_size":"0.01",
+            "status":"post_only"}
+        }}
+        """
+
+        /** Keyed by the share-equivalent ids, as Kraken answers `asset_class=tokenized_asset`. */
+        const val STOCK_TICKERS = """
+        {"error":[],"result":{
+          "AAPLxUSD":{"a":["333.27","2","2.000"],"b":["333.26","1","1.000"],"c":["333.33","0.022500"],
+            "v":["3.737641","14.756912"],"p":["333.83","333.44"],"t":[19,41],"l":["333.20","333.18"],
+            "h":["335.02","335.02"],"o":"333.31"},
+          "AMDxUSD":{"a":["634.09000","2","2.000"],"b":["634.08000","1","1.000"],"c":["633.05000","0.969900"],
+            "v":["106.767419","0.969900"],"p":["632.86265","633.05000"],"t":[91,1],"l":["619.25000","633.05000"],
+            "h":["642.51000","633.05000"],"o":"621.33000"}
+        }}
+        """
+
+        /** Kraken's live answer when one asked-for pair is unknown: an `E` error next to the others. */
+        const val STOCK_TICKERS_IN_PART = """
+        {"error":["EQuery:Unknown asset pair"],"result":{
+          "AAPLxUSD":{"a":["333.23","2","2.000"],"b":["333.20","2","2.000"],"c":["333.20","0.022510"],
+            "v":["4.088314","15.107585"],"p":["333.77","333.43"],"t":[25,47],"l":["333.07","333.07"],
+            "h":["335.02","335.02"],"o":"333.31"}
+        }}
+        """
+
+        const val CRYPTO_TICKERS_IN_PART = """
+        {"error":["EQuery:Unknown asset pair"],"result":{
+          "XXBTZEUR":{"a":["65926.20000","1","1.000"],"b":["65926.10000","1","1.000"],
+            "c":["65908.90000","0.02077666"],"v":["452.78380117","627.83444338"],
+            "p":["66153.82909","66266.23772"],"t":[17399,24763],"l":["65160.50000","65160.50000"],
+            "h":["67389.20000","67389.20000"],"o":"66997.30000"}
+        }}
+        """
+
+        /** Verbatim from `Ticker?pair=ADBExUSD,CRWVxUSD&asset_class=tokenized_asset` on 2026-10-04. */
+        const val ZERO_STOCK_TICKERS = """
+        {"error":[],"result":{
+          "ADBExUSD":{"a":["0.00000","0","0.000"],"b":["224.15000","3","3.000"],"c":["0.00000","0.000000"],
+            "v":["0.000000","0.000000"],"p":["0.00000","0.00000"],"t":[0,0],"l":["0.00000","0.00000"],
+            "h":["0.00000","0.00000"],"o":"0.00000"},
+          "CRWVxUSD":{"a":["0.00000","0","0.000"],"b":["0.00000","0","0.000"],"c":["86.96000","0.300000"],
+            "v":["0.000000","0.300000"],"p":["0.00000","86.96000"],"t":[0,1],"l":["0.00000","86.96000"],
+            "h":["0.00000","86.96000"],"o":"0.00000"}
+        }}
+        """
+
+        /** The same zeros for a coin. */
+        const val ZERO_TICKER = """
+        {"error":[],"result":{"NEWEUR":{"a":["0.00000","0","0.000"],"b":["0.00000","0","0.000"],
+          "c":["0.00000","0.00000000"],"v":["0.00000000","0.00000000"],"p":["0.00000","0.00000"],"t":[0,0],
+          "l":["0.00000","0.00000"],"h":["0.00000","0.00000"],"o":"0.00000"}}}
+        """
+
+        const val STOCK_OHLC = """
+        {"error":[],"result":{"AAPLxUSD":[
+          [1791117900,"333.35","333.35","333.35","333.35","0.00","0.000000",0],
+          [1791118800,"333.34","333.34","333.33","333.33","333.33","0.128892",2]
+        ],"last":1791117900}}
+        """
+
+        val AAPLX_USD = Market(
+            key = MarketKey.of(ExchangeId.KRAKEN, "AAPLx", "USD"),
+            nativeSymbol = "AAPLxUSD",
+            pricePrecision = 2,
+            assetClass = AssetClass.STOCK,
+            underlying = "AAPL",
+        )
+
+        val AMDX_USD = Market(
+            key = MarketKey.of(ExchangeId.KRAKEN, "AMDx", "USD"),
+            nativeSymbol = "AMDxUSD",
+            pricePrecision = 2,
+            assetClass = AssetClass.STOCK,
+            underlying = "AMD",
+        )
+
         const val EMPTY_RESULT = """{"error":[],"result":{}}"""
+
+        /** Kraken's answer to an asset class it does not offer (checked live on 2026-10-04). */
+        const val INVALID_ARGUMENTS_ERROR = """{"error":["EGeneral:Invalid arguments"]}"""
 
         const val UNKNOWN_PAIR_ERROR = """{"error":["EQuery:Unknown asset pair"]}"""
 

@@ -14,21 +14,27 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -47,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -66,7 +73,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -77,11 +86,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neatcode.tabgreater.core.data.APP_SCOPE
 import com.neatcode.tabgreater.core.data.popular.DEFAULT_POPULAR_PAIRS
+import com.neatcode.tabgreater.core.data.popular.DEFAULT_POPULAR_STOCKS
 import com.neatcode.tabgreater.core.data.popular.PopularPairsRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.data.repo.SparklineRepository
 import com.neatcode.tabgreater.core.live.LiveTickerLauncher
 import com.neatcode.tabgreater.core.live.MarketDataRepository
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.SparkPeriod
@@ -134,8 +145,13 @@ class WidgetConfigActivity : ComponentActivity() {
                 WidgetConfigScreen(
                     loadInitial = { configs.get(appWidgetId) },
                     refreshCatalogue = { markets.refreshAll() },
-                    search = { query -> markets.search(query, SEARCH_LIMIT) },
+                    search = { query, scope ->
+                        WidgetSearch.run(query, scope, SEARCH_LIMIT) { text, limit, assetClass ->
+                            markets.search(text, limit, assetClass)
+                        }
+                    },
                     loadPopularPairs = { popular.pairs() },
+                    loadPopularStocks = { markets.popularStockRoots().ifEmpty { DEFAULT_POPULAR_STOCKS } },
                     loadPreview = { key -> previewModel(key) },
                     onSave = { config -> save(appWidgetId, config) },
                     onCancel = { finish() },
@@ -196,8 +212,9 @@ class WidgetConfigActivity : ComponentActivity() {
 private fun WidgetConfigScreen(
     loadInitial: suspend () -> WidgetConfig?,
     refreshCatalogue: suspend () -> Unit,
-    search: suspend (String) -> List<Market>,
+    search: suspend (String, AssetClass) -> ScopedResults,
     loadPopularPairs: suspend () -> List<String>,
+    loadPopularStocks: suspend () -> List<String>,
     loadPreview: suspend (MarketKey) -> WidgetRenderModel?,
     onSave: (WidgetConfig) -> Unit,
     onCancel: () -> Unit,
@@ -212,11 +229,15 @@ private fun WidgetConfigScreen(
     val queryState = rememberTextFieldState()
     val query = queryState.text.toString()
     var seeded by rememberSaveable { mutableStateOf(false) }
-    var results by remember { mutableStateOf(emptyList<Market>()) }
+    // Crypto on every open, as in "+ Add pair"; saved only so a rotation keeps the open tab.
+    var scope by rememberSaveable { mutableStateOf(AssetClass.CRYPTO) }
+    var searchText by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf(ScopedResults(AssetClass.CRYPTO)) }
     var loading by remember { mutableStateOf(true) }
     var preview by remember { mutableStateOf<WidgetRenderModel?>(null) }
     // Starts on the built-in list so the chip row never flashes empty, exactly as "+ Add pair" does.
     var popularPairs by remember { mutableStateOf(DEFAULT_POPULAR_PAIRS) }
+    var popularStocks by remember { mutableStateOf(DEFAULT_POPULAR_STOCKS) }
 
     val selected = selectedKey?.let { MarketKey.parseOrNull(it) }
 
@@ -230,8 +251,11 @@ private fun WidgetConfigScreen(
             }
             seeded = true
         }
+        // The cached catalogue's ranking first, the refreshed one after, as "+ Add pair" does.
+        popularStocks = loadPopularStocks()
         refreshCatalogue()
         loading = false
+        popularStocks = loadPopularStocks()
     }
 
     // Opening this sheet is the only thing that may refresh the ranking, and the repository still
@@ -245,14 +269,15 @@ private fun WidgetConfigScreen(
         preview = selected?.let { loadPreview(it) }
     }
 
-    LaunchedEffect(query, loading) {
+    // Typing is debounced; a tab tap, or the catalogue refresh landing, re-runs the query at once.
+    LaunchedEffect(query) {
         val text = query.trim()
-        if (text.isEmpty()) {
-            results = emptyList()
-            return@LaunchedEffect
-        }
-        delay(SEARCH_DEBOUNCE_MS)
-        results = search(text)
+        if (text.isNotEmpty()) delay(SEARCH_DEBOUNCE_MS)
+        searchText = text
+    }
+
+    LaunchedEffect(searchText, scope, loading) {
+        results = search(searchText, scope)
     }
 
     Column(
@@ -268,29 +293,48 @@ private fun WidgetConfigScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
         )
 
-        WidgetPreview(
-            key = selected,
-            data = preview,
-            backgroundArgb = background,
-            alpha = alpha,
-            showSparkline = showSparkline,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        // While a pair is being searched the preview gives its room to the results: with the
+        // keyboard up they would otherwise get less than a row on a short screen. Picking a result
+        // clears the query, so the preview returns showing that pair.
+        if (query.isBlank()) {
+            WidgetPreview(
+                key = selected,
+                data = preview,
+                backgroundArgb = background,
+                alpha = alpha,
+                showSparkline = showSparkline,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
 
-        Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
+        }
 
         SearchField(
             state = queryState,
+            // The Stocks scope's counterpart of the app's empty-state hint: the blank field says it.
+            hint = stringResource(
+                if (scope == AssetClass.STOCK) {
+                    R.string.widget_config_scope_stocks_hint
+                } else {
+                    R.string.widget_config_search_hint
+                },
+            ),
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
+        ScopeRow(scope = scope, onScopeChange = { scope = it })
+
         // Quick-add chips only make sense as a starting point; once the user types they are noise.
         if (query.isBlank()) {
-            PopularPairsRow(
-                pairs = popularPairs,
-                onPairClick = { pair -> queryState.setTextAndPlaceCursorAtEnd(pair) },
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
+            // Keyed so each scope's row starts scrolled to its first chip.
+            key(scope) {
+                PopularPairsRow(
+                    pairs = if (scope == AssetClass.STOCK) popularStocks else popularPairs,
+                    onPairClick = { pair -> queryState.setTextAndPlaceCursorAtEnd(pair) },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+            if (scope == AssetClass.STOCK) StockScopeCaption()
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -304,15 +348,26 @@ private fun WidgetConfigScreen(
                     onShowSparklineChange = { showSparkline = it },
                 )
             } else {
-                ResultsPane(
-                    results = results,
-                    loading = loading,
-                    selected = selected,
-                    onPick = { market ->
-                        selectedKey = market.key.value
-                        queryState.clearText()
-                    },
-                )
+                // A new scope is a different list: start it at the top, not at the old offset.
+                key(scope) {
+                    // Rows or a count found for the other tab must not show under this one while
+                    // its own search is still running.
+                    val current = results.scope == scope
+                    ResultsPane(
+                        results = if (current) results.markets else emptyList(),
+                        loading = loading,
+                        pending = !current,
+                        selected = selected,
+                        stockCaption = scope == AssetClass.STOCK,
+                        otherScopeMatches = if (current) results.otherScopeMatches else 0,
+                        otherScope = WidgetSearch.other(scope),
+                        onShowOtherScope = { scope = WidgetSearch.other(scope) },
+                        onPick = { market ->
+                            selectedKey = market.key.value
+                            queryState.clearText()
+                        },
+                    )
+                }
             }
         }
 
@@ -563,7 +618,7 @@ private fun Modifier.checkerboard(): Modifier = drawBehind {
 // ---- Search --------------------------------------------------------------------------------
 
 @Composable
-private fun SearchField(state: TextFieldState, modifier: Modifier = Modifier) {
+private fun SearchField(state: TextFieldState, hint: String, modifier: Modifier = Modifier) {
     // BasicTextField exposes no label of its own, so the hint is published as the field's name for
     // TalkBack and for uiautomator (F5-4).
     val label = stringResource(R.string.widget_config_search_label)
@@ -579,7 +634,7 @@ private fun SearchField(state: TextFieldState, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.CenterStart,
     ) {
         if (state.text.isEmpty()) {
-            Text(stringResource(R.string.widget_config_search_hint), style = TWType.subtitle)
+            Text(hint, style = TWType.subtitle)
         }
         BasicTextField(
             state = state,
@@ -599,6 +654,9 @@ private fun SearchField(state: TextFieldState, modifier: Modifier = Modifier) {
  *
  * The ranking comes from CoinGecko; its credit lives on the About screen, in the README and in
  * NOTICE rather than in a 36 dp row.
+ *
+ * The Stocks scope feeds the same row with plain stock tickers (`TSLA`), ranked from the local
+ * catalogue; a tapped ticker is typed just the same and lists that stock's tokens.
  */
 @Composable
 private fun PopularPairsRow(pairs: List<String>, onPairClick: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -636,25 +694,153 @@ private fun PopularPairChip(pair: String, onClick: () -> Unit) {
     }
 }
 
+/**
+ * The "Crypto | Stocks" scope under the search field, styled like the app's tab rows: the active
+ * label in the primary text colour over a 3 dp accent indicator as wide as the text, the inactive one in the
+ * secondary text colour, a 1 dp `outline` divider underneath. Each tab is at least 48 dp wide and
+ * reports itself as a selected or unselected [Role.Tab].
+ */
+@Composable
+private fun ScopeRow(scope: AssetClass, onScopeChange: (AssetClass) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(SCOPE_ROW_DP.dp - 1.dp)
+                .padding(start = SCOPE_ROW_START_DP.dp)
+                .selectableGroup(),
+        ) {
+            ScopeTab(
+                label = stringResource(R.string.widget_config_scope_crypto),
+                active = scope == AssetClass.CRYPTO,
+                onClick = { onScopeChange(AssetClass.CRYPTO) },
+            )
+            ScopeTab(
+                label = stringResource(R.string.widget_config_scope_stocks),
+                active = scope == AssetClass.STOCK,
+                onClick = { onScopeChange(AssetClass.STOCK) },
+            )
+        }
+        HorizontalDivider(thickness = 1.dp, color = TW.Outline)
+    }
+}
+
+@Composable
+private fun ScopeTab(label: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .widthIn(min = SCOPE_TAB_MIN_DP.dp)
+            .selectable(selected = active, role = Role.Tab, onClick = onClick)
+            .padding(horizontal = SCOPE_TAB_PAD_DP.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        // IntrinsicSize.Max pins the column to the label's own width, which the indicator fills.
+        Column(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(IntrinsicSize.Max),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = label,
+                style = if (active) TWType.tabActive else TWType.tab,
+                color = if (active) TW.TextPrimary else TW.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(IndicatorShape)
+                    .background(if (active) TW.Accent else Color.Transparent),
+            )
+        }
+    }
+}
+
+/** The Stocks scope's quiet caption: these are tokens traded on crypto exchanges, not the shares. */
+@Composable
+private fun StockScopeCaption() {
+    Text(
+        text = stringResource(R.string.widget_config_scope_caption),
+        style = TWType.subtitle,
+        maxLines = 3,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+    )
+}
+
+/** "N matches in Stocks": switches the scope, so it is a button with a 48 dp touch height. */
+@Composable
+private fun OtherScopeHint(count: Int, scope: AssetClass, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clip(ChipShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = pluralStringResource(
+                if (scope == AssetClass.STOCK) {
+                    R.plurals.widget_config_scope_matches_stocks
+                } else {
+                    R.plurals.widget_config_scope_matches_crypto
+                },
+                count,
+                WidgetSearch.countLabel(count),
+            ),
+            style = TWType.textButton,
+        )
+    }
+}
+
+/**
+ * The search results. Under an empty result a tappable "N matches in Stocks" (or Crypto) switches
+ * to the scope that has the query. In the Stocks scope the caption heads the list instead of
+ * sitting above it, so it scrolls away and leaves the rows the little room the keyboard spares.
+ */
 @Composable
 private fun ResultsPane(
     results: List<Market>,
     loading: Boolean,
+    pending: Boolean,
     selected: MarketKey?,
+    stockCaption: Boolean,
+    otherScopeMatches: Int,
+    otherScope: AssetClass,
+    onShowOtherScope: () -> Unit,
     onPick: (Market) -> Unit,
 ) {
+    // A tapped scope whose search has not answered yet: blank for that moment, not "No markets match".
+    if (pending) return
     if (results.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text(
                 text = stringResource(
                     if (loading) R.string.widget_config_loading else R.string.widget_config_no_match,
                 ),
                 style = TWType.subtitle,
             )
+            if (otherScopeMatches > 0) {
+                OtherScopeHint(count = otherScopeMatches, scope = otherScope, onClick = onShowOtherScope)
+            }
         }
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
+        if (stockCaption) item(key = CAPTION_ITEM_KEY) { StockScopeCaption() }
         items(results, key = { it.key.value }) { market ->
             Row(
                 modifier = Modifier
@@ -803,6 +989,16 @@ private fun hexOf(argb: Long): String = String.format(Locale.ROOT, "#%06X", argb
 
 /** The quick-add chips' pill, the shape the app's "+ Add pair" row uses. */
 private val ChipShape = RoundedCornerShape(percent = 50)
+
+/** The scope tabs' indicator, rounded on top like the app's watchlist tab row. */
+private val IndicatorShape = RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp)
+private const val SCOPE_ROW_DP = 36
+private const val SCOPE_TAB_MIN_DP = 48
+
+/** Half the app's 24 dp tab label gap on each side; with the row's 4 dp the first label sits 16 dp in. */
+private const val SCOPE_TAB_PAD_DP = 12
+private const val SCOPE_ROW_START_DP = 4
+private const val CAPTION_ITEM_KEY = "stock-caption"
 
 private const val SEARCH_DEBOUNCE_MS = 200L
 private const val SAMPLE_PRICE = "65,609.70"

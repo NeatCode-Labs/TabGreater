@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TickerSnapshotEntity::class,
         ChartDrawingEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class TabGreaterDatabase : RoomDatabase() {
@@ -58,5 +58,29 @@ object DatabaseMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2)
+    /**
+     * Columns [MIGRATION_2_3] appends to `markets`, byte for byte as they appear in the
+     * `createSql` of `schemas/…/3.json` (a unit test compares the two), so an upgraded table has
+     * the same definition, default included, as one a fresh install creates.
+     */
+    const val MARKETS_ASSET_CLASS_COLUMN: String = "`asset_class` TEXT NOT NULL DEFAULT 'crypto'"
+    const val MARKETS_UNDERLYING_COLUMN: String = "`underlying` TEXT"
+
+    /**
+     * 2 → 3: stock tokens. `markets` gains the asset class (every existing row reads as crypto)
+     * and the underlying share ticker. The cached catalogue is then stamped as never refreshed,
+     * otherwise the 24 h freshness gate of
+     * [com.neatcode.tabgreater.core.data.repo.RoomMarketRepository.refreshMarkets] would keep the
+     * rows unclassified for up to a day. A refresh rewrites or deletes every row of its exchange
+     * anyway, and an exchange that cannot be reached keeps its rows as before.
+     */
+    val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE markets ADD COLUMN $MARKETS_ASSET_CLASS_COLUMN")
+            db.execSQL("ALTER TABLE markets ADD COLUMN $MARKETS_UNDERLYING_COLUMN")
+            db.execSQL("UPDATE markets SET updated_at = 0")
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 }

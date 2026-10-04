@@ -82,6 +82,19 @@ internal object TWType {
         fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,
         fontSize = 15.sp, lineHeight = 18.sp, color = TW.Scrim, platformStyle = Tight,
     )
+
+    /** The search scope tabs, as the app's watchlist tab row sets its labels. */
+    val tab = TextStyle(
+        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,
+        fontSize = 12.sp, lineHeight = 14.sp, platformStyle = Tight,
+    )
+    val tabActive = tab.copy(fontWeight = FontWeight.Medium, color = TW.TextPrimary)
+
+    /** An accent text button, the app's dialog / "UNDO" style. */
+    val textButton = TextStyle(
+        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
+        fontSize = 14.sp, lineHeight = 16.sp, letterSpacing = 0.5.sp, color = TW.Accent, platformStyle = Tight,
+    )
 }
 
 private val Scheme = darkColorScheme(

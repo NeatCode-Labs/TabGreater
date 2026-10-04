@@ -3,6 +3,8 @@ package com.neatcode.tabgreater.core.exchange.binance
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
+import com.neatcode.tabgreater.core.exchange.StockTokens
+import com.neatcode.tabgreater.core.exchange.classified
 import com.neatcode.tabgreater.core.exchange.ws.ExchangeSocket
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
@@ -23,9 +25,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -89,7 +95,7 @@ class BinanceAdapter(
                     nativeSymbol = dto.symbol,
                     pricePrecision = tickSize?.let(::decimalsOf) ?: dto.quotePrecision,
                     tickSize = tickSize?.toDoubleOrNull(),
-                )
+                ).classified(StockTokens.binance(dto.baseAsset, dto.inStockGroup))
             }
             .toList()
     }
@@ -487,7 +493,24 @@ private data class SymbolDto(
     val quotePrecision: Int = 8,
     val isSpotTradingAllowed: Boolean = false,
     val filters: List<FilterDto> = emptyList(),
+    /** `permissionSets`, reduced while decoding to whether a set names [StockTokens.BINANCE_STOCK_GROUP]. */
+    @SerialName("permissionSets")
+    @Serializable(with = StockGroupFlag::class)
+    val inStockGroup: Boolean = false,
 )
+
+/**
+ * `permissionSets` holds ~200 trading-group ids per symbol and makes up most of exchangeInfo's
+ * 18 MB. Decoded as `List<List<String>>` it would keep ~750 000 strings alive until the whole
+ * catalogue is done; this reads one symbol's sets at a time and keeps the single bit the adapter uses.
+ */
+private object StockGroupFlag : JsonTransformingSerializer<Boolean>(Boolean.serializer()) {
+    override fun transformDeserialize(element: JsonElement): JsonElement = JsonPrimitive(
+        (element as? JsonArray).orEmpty().any { set ->
+            (set as? JsonArray).orEmpty().any { (it as? JsonPrimitive)?.content == StockTokens.BINANCE_STOCK_GROUP }
+        },
+    )
+}
 
 @Serializable
 private data class FilterDto(val filterType: String = "", val tickSize: String? = null)

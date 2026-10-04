@@ -12,6 +12,7 @@ import com.neatcode.tabgreater.core.data.db.WatchlistItemCount
 import com.neatcode.tabgreater.core.data.db.WatchlistItemDao
 import com.neatcode.tabgreater.core.data.db.WatchlistItemEntity
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
@@ -286,27 +287,46 @@ internal class FakeMarketDao(seed: List<MarketEntity> = emptyList()) : MarketDao
     override suspend fun lastUpdated(exchange: String): Long? =
         rows.values.filter { it.exchange == exchange }.maxOfOrNull { it.updatedAt }
 
-    override suspend fun search(prefix: String, pattern: String, limit: Int): List<MarketEntity> =
+    // Like the SQL, every search filters on the asset class before it applies the limit.
+    override suspend fun search(prefix: String, pattern: String, assetClass: String?, limit: Int): List<MarketEntity> =
         rows.values.asSequence()
-            .filter { it.active }
+            .filter { it.active && it.isIn(assetClass) }
             .filter { it.base.startsWith(prefix) || it.quote.startsWith(prefix) || like("${it.base}/${it.quote}", pattern) }
             .sortedWith(order)
             .take(limit)
             .toList()
 
-    override suspend fun searchPair(base: String, quotePrefix: String, limit: Int): List<MarketEntity> =
+    override suspend fun searchPair(base: String, quotePrefix: String, assetClass: String?, limit: Int): List<MarketEntity> =
         rows.values.asSequence()
-            .filter { it.active && (base.isEmpty() || it.base == base) && it.quote.startsWith(quotePrefix) }
+            .filter { it.active && it.isIn(assetClass) }
+            .filter { row ->
+                val pinned = base.isEmpty() || row.base == base || (assetClass == "stock" && row.underlying == base)
+                pinned && row.quote.startsWith(quotePrefix)
+            }
             .sortedWith(order)
             .take(limit)
             .toList()
 
-    override suspend fun searchConcatCandidates(query: String, limit: Int): List<MarketEntity> =
+    override suspend fun searchConcatCandidates(query: String, assetClass: String?, limit: Int): List<MarketEntity> =
         rows.values.asSequence()
-            .filter { it.active && query.startsWith(it.base) }
+            .filter { it.active && it.isIn(assetClass) && query.startsWith(it.base) }
             .sortedWith(order)
             .take(limit)
             .toList()
+
+    override suspend fun popularUnderlyings(assetClass: String, exchanges: List<String>, limit: Int): List<String> =
+        rows.values
+            .filter { it.active && it.assetClass == assetClass && it.exchange in exchanges }
+            .mapNotNull { row -> row.underlying?.let { it to row.exchange } }
+            .groupBy({ it.first }, { it.second })
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, List<String>>> { it.value.distinct().size }
+                    .thenByDescending { it.value.size }
+                    .thenBy { it.key },
+            )
+            .take(limit)
+            .map { it.key }
 
     override suspend fun upsertAll(markets: List<MarketEntity>) {
         markets.forEach { rows[it.marketKey] = it }
@@ -320,6 +340,9 @@ internal class FakeMarketDao(seed: List<MarketEntity> = emptyList()) : MarketDao
         deleteStaleCalls++
         rows.values.removeAll { it.exchange == exchange && it.updatedAt < refreshedAt }
     }
+
+    /** `(:assetClass IS NULL OR asset_class = :assetClass)` */
+    private fun MarketEntity.isIn(assetClass: String?): Boolean = assetClass == null || this.assetClass == assetClass
 
     /** Only the `prefix || '%'` shape is used by the repository. */
     private fun like(value: String, pattern: String): Boolean =
@@ -367,6 +390,7 @@ internal fun marketEntity(
     nativeSymbol: String = key.substringAfter(':').replace("/", ""),
     updatedAt: Long = 0L,
     active: Boolean = true,
+    underlying: String? = null,
 ): MarketEntity {
     val parsed = MarketKey(key)
     return MarketEntity(
@@ -379,8 +403,20 @@ internal fun marketEntity(
         tickSize = 0.01,
         active = active,
         updatedAt = updatedAt,
+        assetClass = if (underlying != null) AssetClass.STOCK.id else AssetClass.CRYPTO.id,
+        underlying = underlying,
     )
 }
 
-internal fun market(key: String): Market =
-    Market(key = MarketKey(key), nativeSymbol = key.substringAfter(':').replace("/", ""), pricePrecision = 2)
+/** A stock-token row tracking the share [underlying]. */
+internal fun stockEntity(key: String, underlying: String, active: Boolean = true): MarketEntity =
+    marketEntity(key, active = active, underlying = underlying)
+
+internal fun market(key: String, underlying: String? = null): Market =
+    Market(
+        key = MarketKey(key),
+        nativeSymbol = key.substringAfter(':').replace("/", ""),
+        pricePrecision = 2,
+        assetClass = if (underlying != null) AssetClass.STOCK else AssetClass.CRYPTO,
+        underlying = underlying,
+    )

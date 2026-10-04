@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.core.exchange.kraken
 
 import app.cash.turbine.test
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
@@ -29,6 +30,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -149,6 +151,72 @@ class KrakenAdapterSocketTest {
             val next: Candle = awaitItem()
             assertEquals(Instant.parse(SECOND_BUCKET).toEpochMilli(), next.openTime)
             assertTrue(!next.closed)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        assertTrue(awaitServerClosing() > 0)
+    }
+
+    /** Kraken matches the lowercase `x` of a stock token case-sensitively: `AAPLX/USD` is rejected. */
+    @Test
+    fun `watchTickers subscribes a stock token with Kraken's exact-case symbol`() = runBlocking {
+        adapter.watchTickers(listOf(AAPLX_USD, BTC_EUR)).test(timeout = TIMEOUT) {
+            val socket = awaitServerSocket()
+            // Both classes share one frame; crypto symbols are unchanged.
+            assertEquals(listOf("AAPLx/USD", "BTC/EUR"), symbolsOf(awaitServerMessage()))
+
+            socket.send(STOCK_TICKER_FRAME)
+            val ticker: Ticker = awaitItem()
+            assertEquals("kraken:AAPLX/USD", ticker.key.value)
+            assertEquals(333.33033, ticker.last, 1e-9)
+            assertEquals(0.01, ticker.changePct24h!!, 1e-9)
+            socket.send(TICKER_FRAME)
+            assertEquals(BTC_EUR.key, awaitItem().key)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        assertTrue(awaitServerClosing() > 0)
+    }
+
+    /** Kraken streams a stock token that has not traded as zeros, often stamped 1970 (live, 2026-10-04). */
+    @Test
+    fun `watchTickers drops a stock token's zero price and blanks an empty side of its book`() = runBlocking {
+        adapter.watchTickers(listOf(AAPLX_USD, CRWVX_USD)).test(timeout = TIMEOUT) {
+            val socket = awaitServerSocket()
+            assertEquals(listOf("AAPLx/USD", "CRWVx/USD"), symbolsOf(awaitServerMessage()))
+
+            socket.send(STOCK_ZERO_FRAME)
+            expectNoEvents()
+
+            // Frames are handled in order, so a zero that got through would arrive first here.
+            socket.send(STOCK_NO_ASK_FRAME)
+            val ticker: Ticker = awaitItem()
+            assertEquals("kraken:AAPLX/USD", ticker.key.value)
+            assertEquals(333.33033, ticker.last, 1e-9)
+            assertEquals(333.26056, ticker.bid!!, 1e-9)
+            assertNull(ticker.ask)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        assertTrue(awaitServerClosing() > 0)
+    }
+
+    @Test
+    fun `watchKlines streams a stock token under its exact-case symbol`() = runBlocking {
+        adapter.watchKlines(AAPLX_USD, Timeframe.M15).test(timeout = TIMEOUT) {
+            val socket = awaitServerSocket()
+            val subscribe = awaitServerMessage()
+            assertTrue(subscribe, subscribe.contains("\"channel\":\"ohlc\""))
+            assertEquals(listOf("AAPLx/USD"), symbolsOf(subscribe))
+
+            socket.send(ohlcFrame(begin = FIRST_BUCKET, close = 333.33, symbol = "AAPLx/USD"))
+            val forming: Candle = awaitItem()
+            assertEquals(Instant.parse(FIRST_BUCKET).toEpochMilli(), forming.openTime)
+            assertEquals(333.33, forming.close, 1e-9)
+            assertTrue(!forming.closed)
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -354,9 +422,9 @@ class KrakenAdapterSocketTest {
 
     private suspend fun awaitServerClosing(): Int = withTimeout(TIMEOUT_MS) { serverClosings.receive() }
 
-    private fun ohlcFrame(begin: String, close: Double) = """
+    private fun ohlcFrame(begin: String, close: Double, symbol: String = "BTC/EUR") = """
         {"channel":"ohlc","type":"update","timestamp":"2026-08-22T18:15:11.309506666Z","data":[
-          {"symbol":"BTC/EUR","open":65927.0,"high":65930.0,"low":65920.0,"close":$close,"trades":2,
+          {"symbol":"$symbol","open":65927.0,"high":65930.0,"low":65920.0,"close":$close,"trades":2,
            "volume":0.01591681,"vwap":65927.0,"interval_begin":"$begin","interval":15,
            "timestamp":"2026-08-22T18:30:00.000000Z"}]}
     """.trimIndent()
@@ -409,6 +477,48 @@ class KrakenAdapterSocketTest {
           {"symbol":"BTC/EUR","bid":65926.9,"bid_qty":0.10900000,"ask":65927.0,"ask_qty":0.05618531,
            "last":65927.0,"volume":627.85684450,"vwap":66266.2,"low":65160.5,"high":67389.2,
            "change":-243.3,"change_pct":-0.37,"trades":24757,"timestamp":"2026-08-22T18:15:11.309506Z"}]}
+        """
+
+        /** A tokenized share as stored: upper-cased key, case-preserving REST pair id. */
+        val AAPLX_USD = Market(
+            key = MarketKey.of(ExchangeId.KRAKEN, "AAPLx", "USD"),
+            nativeSymbol = "AAPLxUSD",
+            pricePrecision = 2,
+            tickSize = 0.01,
+            assetClass = AssetClass.STOCK,
+            underlying = "AAPL",
+        )
+
+        /** Recorded from the live v2 feed on 2026-10-04. */
+        const val STOCK_TICKER_FRAME = """
+        {"channel":"ticker","type":"snapshot","data":[
+          {"symbol":"AAPLx/USD","bid":333.26056,"bid_qty":0.012003,"ask":333.27053,"ask_qty":1.500283,
+           "last":333.33033,"volume":14.756911,"vwap":333.44373,"low":333.18082,"high":335.02479,
+           "change":0.01993,"change_pct":0.01,"trades":41,"timestamp":"2026-10-04T13:13:20.676327Z"}]}
+        """
+
+        val CRWVX_USD = Market(
+            key = MarketKey.of(ExchangeId.KRAKEN, "CRWVx", "USD"),
+            nativeSymbol = "CRWVxUSD",
+            pricePrecision = 2,
+            tickSize = 0.01,
+            assetClass = AssetClass.STOCK,
+            underlying = "CRWV",
+        )
+
+        /** Recorded from the live v2 feed on 2026-10-04: no trade in the window, an empty book. */
+        const val STOCK_ZERO_FRAME = """
+        {"channel":"ticker","type":"snapshot","data":[
+          {"symbol":"CRWVx/USD","bid":0,"bid_qty":0,"ask":0,"ask_qty":0,"last":0,"volume":0,"vwap":0,
+           "low":0,"high":0,"change":0,"change_pct":0,"trades":0,"timestamp":"1970-01-01T00:00:00.000000Z"}]}
+        """
+
+        /** [STOCK_TICKER_FRAME] with nobody selling, which Kraken streams as an ask of 0. */
+        const val STOCK_NO_ASK_FRAME = """
+        {"channel":"ticker","type":"update","data":[
+          {"symbol":"AAPLx/USD","bid":333.26056,"bid_qty":0.012003,"ask":0,"ask_qty":0,
+           "last":333.33033,"volume":14.756911,"vwap":333.44373,"low":333.18082,"high":335.02479,
+           "change":0.01993,"change_pct":0.01,"trades":41,"timestamp":"2026-10-04T13:13:20.676327Z"}]}
         """
 
         const val STATUS_FRAME = """

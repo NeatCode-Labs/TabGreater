@@ -9,6 +9,14 @@ import java.util.Locale
 val DEFAULT_POPULAR_PAIRS: List<String> =
     listOf("BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT")
 
+/**
+ * The stock tickers the search's Stocks scope offers while the local catalogue cannot rank its own
+ * (`MarketRepository.popularStockRoots` is empty): before the first classified catalogue refresh,
+ * or when no exchange lists a stock token at all. A chip types the plain ticker, e.g. `TSLA`.
+ */
+val DEFAULT_POPULAR_STOCKS: List<String> =
+    listOf("TSLA", "NVDA", "AAPL", "MSTR", "SPY", "QQQ", "COIN", "HOOD")
+
 /** Quote asset every quick-add chip is built against. */
 const val POPULAR_QUOTE: String = "USDT"
 

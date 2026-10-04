@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Configuration screen: the "Crypto | Stocks" search scope -->
+    <string name="widget_config_scope_crypto">Crypto</string>
+    <string name="widget_config_scope_stocks">Stocks</string>
+    <string name="widget_config_scope_caption">Tokenized stocks on crypto exchanges. Prices can differ from the share price.</string>
+    <string name="widget_config_scope_stocks_hint">Search stock tokens by ticker, e.g. TSLA</string>
+    <!-- Under "No markets match"; %1$s is the count, "100+" above the cap. Tapping switches the scope. -->
+    <plurals name="widget_config_scope_matches_crypto">
+        <item quantity="one">%1$s match in Crypto</item>
+        <item quantity="other">%1$s matches in Crypto</item>
+    </plurals>
+    <plurals name="widget_config_scope_matches_stocks">
+        <item quantity="one">%1$s match in Stocks</item>
+        <item quantity="other">%1$s matches in Stocks</item>
+    </plurals>
+</resources>

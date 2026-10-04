@@ -58,6 +58,13 @@ data class MarketEntity(
     @ColumnInfo(name = "tick_size") val tickSize: Double?,
     val active: Boolean,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    /**
+     * [com.neatcode.tabgreater.core.model.AssetClass.id]. The SQL default matches the
+     * `ALTER TABLE` of [DatabaseMigrations.MIGRATION_2_3], so fresh and upgraded tables are equal.
+     */
+    @ColumnInfo(name = "asset_class", defaultValue = "'crypto'") val assetClass: String = "crypto",
+    /** [com.neatcode.tabgreater.core.model.Market.underlying]; `null` for crypto. */
+    val underlying: String? = null,
 )
 
 /** Candle cache so tiles and charts are never empty on cold start. */

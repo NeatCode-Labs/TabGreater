@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.core.exchange.gate
 
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
@@ -53,6 +54,7 @@ class GateAdapterRestTest {
     @Test
     fun `listMarkets keeps tradable pairs, derives the tick size and skips non-ascii assets`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(CURRENCY_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(200).body("[]").build())
 
         val markets = adapter.listMarkets()
 
@@ -69,10 +71,93 @@ class GateAdapterRestTest {
         val pepe = markets.first { it.nativeSymbol == "PEPE_USDT" }
         assertEquals(9, pepe.pricePrecision)
         assertEquals(1e-9, pepe.tickSize!!, 1e-18)
+        assertTrue(markets.all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
 
         val request = server.takeRequest()
         assertEquals("/api/v4/spot/currency_pairs", request.url.encodedPath)
         assertNull(request.url.query)
+        // The currency list is the only place Gate marks stock tokens.
+        val currencies = server.takeRequest()
+        assertEquals("/api/v4/spot/currencies", currencies.url.encodedPath)
+        assertNull(currencies.url.query)
+    }
+
+    @Test
+    fun `listMarkets tags stock tokens from the currency categories`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_CURRENCIES).build())
+
+        val markets = adapter.listMarkets().associateBy { it.base }
+
+        val expected = mapOf(
+            "TSLAX" to "TSLA",
+            "AAPLON" to "AAPL",
+            "AAPLG" to "AAPL",
+            // Pre-IPO: only "stocks", so the token is its own underlying.
+            "SPCX" to "SPCX",
+            // Leveraged tokens carry no category and follow their root...
+            "TSLA3L" to "TSLA",
+            "TSLA3S" to "TSLA",
+            // ...which may be a share Gate lists no tradable token for.
+            "NOK3L" to "NOK",
+            "QNTG" to "QNT",
+        )
+        for ((base, underlying) in expected) {
+            val market = markets.getValue(base)
+            assertEquals(base, AssetClass.STOCK, market.assetClass)
+            assertEquals(base, underlying, market.underlying)
+        }
+        // The ONDO coin carries only the Ondo tag; the rest have no stock tag or no category at all.
+        // QNT3L follows the QNT coin, not the QNTG share whose root collides with it.
+        for (base in listOf("ONDO", "BTC", "BTC3L", "AVAX", "SHIB", "QNT", "QNT3L")) {
+            val market = markets.getValue(base)
+            assertEquals(base, AssetClass.CRYPTO, market.assetClass)
+            assertNull(base, market.underlying)
+        }
+        assertEquals(expected.size + 7, markets.size)
+    }
+
+    @Test
+    fun `listMarkets asks for the currency list a second time before giving up on it`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_PAIRS).build())
+        server.enqueue(MockResponse.Builder().code(500).body("boom").build())
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_CURRENCIES).build())
+
+        val markets = adapter.listMarkets().associateBy { it.base }
+
+        // The gStock and the pre-IPO token are only known from the categories.
+        assertEquals("AAPL", markets.getValue("AAPLG").underlying)
+        assertEquals("SPCX", markets.getValue("SPCX").underlying)
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun `listMarkets falls back to the pair names when the currency list fails`() = runTest {
+        // A server error and an unreadable body must both leave the catalogue intact.
+        val failures = listOf(
+            MockResponse.Builder().code(500).body("boom").build(),
+            MockResponse.Builder().code(200).body("<html>").build(),
+        )
+        for (failure in failures) {
+            server.enqueue(MockResponse.Builder().code(200).body(STOCK_PAIRS).build())
+            // Both attempts fail.
+            server.enqueue(failure)
+            server.enqueue(failure)
+
+            val markets = adapter.listMarkets().associateBy { it.base }
+
+            assertEquals(15, markets.size)
+            assertEquals("TSLA", markets.getValue("TSLAX").underlying)
+            assertEquals("AAPL", markets.getValue("AAPLON").underlying)
+            assertEquals("TSLA", markets.getValue("TSLA3L").underlying)
+            assertEquals(AssetClass.STOCK, markets.getValue("TSLA3S").assetClass)
+            // Names give away neither gStocks nor pre-IPO tokens, and NOK has no named token.
+            val crypto = listOf("AAPLG", "SPCX", "NOK3L", "QNTG", "QNT", "QNT3L", "ONDO", "BTC", "BTC3L", "AVAX", "SHIB")
+            for (base in crypto) {
+                assertEquals(base, AssetClass.CRYPTO, markets.getValue(base).assetClass)
+            }
+        }
+        assertEquals(6, server.requestCount)
     }
 
     @Test
@@ -273,6 +358,52 @@ class GateAdapterRestTest {
            "trade_status":"tradable","type":"normal"},
           {"id":"OLD_USDT","base":"OLD","quote":"USDT","precision":4,"trade_status":"untradable","type":"normal"},
           {"id":"SELL_USDT","base":"SELL","quote":"USDT","precision":4,"trade_status":"sellable","type":"normal"}
+        ]
+        """
+
+        val STOCK_PAIRS = listOf(
+            "TSLAX" to "Tesla xStock",
+            "AAPLON" to "Apple Ondo Tokenized",
+            "AAPLG" to "Apple",
+            "SPCX" to "SpaceX",
+            "TSLA3L" to "TSLA3xLong",
+            "TSLA3S" to "TSLA3xShort",
+            "NOK3L" to "NOK3xLong",
+            "QNTG" to "Quantinuum",
+            "QNT" to "Quant",
+            "QNT3L" to "QNT3xLong",
+            "ONDO" to "Ondo Finance",
+            "BTC" to "Bitcoin",
+            "BTC3L" to "BTC3xLong",
+            "AVAX" to "Avalanche",
+            "SHIB" to "Shiba Inu",
+        ).joinToString(separator = ",", prefix = "[", postfix = "]") { (base, name) ->
+            """{"id":"${base}_USDT","base":"$base","base_name":"$name","quote":"USDT","quote_name":"Tether",
+               "precision":2,"trade_status":"tradable","type":"normal"}"""
+        }
+
+        /**
+         * `category` as Gate sends it; NOKG has no tradable pair, AVAX no category field at all, and
+         * the QNTG share's root is also the QNT coin.
+         */
+        const val STOCK_CURRENCIES = """
+        [
+          {"currency":"TSLAX","name":"Tesla xStock","delisted":false,"chain":"SOL","category":["stocks","xstocks"]},
+          {"currency":"AAPLON","name":"Apple Ondo Tokenized","category":["stocks","ondo-stocks"]},
+          {"currency":"AAPLG","name":"Apple","category":["gstocks","stocks"]},
+          {"currency":"SPCX","name":"SpaceX","category":["stocks"],"total_supply":"33900"},
+          {"currency":"NOKG","name":"Nokia","category":["gstocks","stocks"]},
+          {"currency":"TSLA3L","name":"TSLA3xLong","category":[]},
+          {"currency":"TSLA3S","name":"TSLA3xShort","category":[]},
+          {"currency":"NOK3L","name":"NOK3xLong","category":[]},
+          {"currency":"QNTG","name":"Quantinuum","category":["gstocks","stocks"]},
+          {"currency":"QNT","name":"Quant","category":[]},
+          {"currency":"QNT3L","name":"QNT3xLong","category":[]},
+          {"currency":"ONDO","name":"Ondo Finance","category":["ondo-stocks"]},
+          {"currency":"BTC","name":"Bitcoin","category":[],"total_supply":"21000000"},
+          {"currency":"BTC3L","name":"BTC3xLong","category":[]},
+          {"currency":"AVAX","name":"Avalanche"},
+          {"currency":"SHIB","name":"Shiba Inu","category":null}
         ]
         """
 

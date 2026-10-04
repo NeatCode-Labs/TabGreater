@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.core.data.repo
 
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
@@ -155,7 +156,9 @@ private class FakeMarketRepository : MarketRepository {
     override suspend fun getMarkets(keys: Collection<MarketKey>): Map<MarketKey, Market> =
         keys.mapNotNull { key -> known[key]?.let { key to it } }.toMap()
 
-    override suspend fun search(query: String, limit: Int): List<Market> = emptyList()
+    override suspend fun search(query: String, limit: Int, assetClass: AssetClass?): List<Market> = emptyList()
+
+    override suspend fun popularStockRoots(limit: Int): List<String> = emptyList()
 }
 
 /** [FakeExchangeAdapter] with a canned OHLCV response and kline stream. */

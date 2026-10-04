@@ -46,6 +46,9 @@ value class MarketKey(val value: String) {
  * @property nativeSymbol the symbol string the exchange itself uses (REST + WS).
  * @property pricePrecision number of decimals to show for prices (derived from tick size).
  * @property tickSize price increment; `null` if the exchange does not expose it.
+ * @property assetClass [AssetClass.STOCK] for a tokenized share, [AssetClass.CRYPTO] for everything else.
+ * @property underlying plain ticker of the share a stock token tracks (`TSLA` for `TSLAX`, `TSLAON`,
+ *   `TSLAB` and `TSLAG`); `null` for crypto.
  */
 @Serializable
 data class Market(
@@ -54,6 +57,8 @@ data class Market(
     val pricePrecision: Int,
     val tickSize: Double? = null,
     val active: Boolean = true,
+    val assetClass: AssetClass = AssetClass.CRYPTO,
+    val underlying: String? = null,
 ) {
     val exchange: ExchangeId get() = key.exchange
     val base: String get() = key.base

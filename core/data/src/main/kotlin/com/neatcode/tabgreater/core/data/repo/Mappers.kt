@@ -4,6 +4,7 @@ import com.neatcode.tabgreater.core.data.db.CandleEntity
 import com.neatcode.tabgreater.core.data.db.MarketEntity
 import com.neatcode.tabgreater.core.data.db.WatchlistEntity
 import com.neatcode.tabgreater.core.data.db.WatchlistItemEntity
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
@@ -47,6 +48,8 @@ internal fun MarketEntity.toModelOrNull(): Market? {
         pricePrecision = pricePrecision,
         tickSize = tickSize,
         active = active,
+        assetClass = AssetClass.fromId(assetClass),
+        underlying = underlying,
     )
 }
 
@@ -60,6 +63,8 @@ internal fun Market.toEntity(updatedAt: Long): MarketEntity = MarketEntity(
     tickSize = tickSize,
     active = active,
     updatedAt = updatedAt,
+    assetClass = assetClass.id,
+    underlying = underlying,
 )
 
 internal fun CandleEntity.toModel(): Candle = Candle(

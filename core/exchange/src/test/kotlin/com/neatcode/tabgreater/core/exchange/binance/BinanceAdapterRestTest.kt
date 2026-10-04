@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.core.exchange.binance
 
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
@@ -70,10 +71,31 @@ class BinanceAdapterRestTest {
         val noFilter = markets.first { it.nativeSymbol == "NOFEUR" }
         assertEquals(6, noFilter.pricePrecision)
         assertNull(noFilter.tickSize)
+        assertTrue(markets.all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
 
         val request = server.takeRequest()
         assertEquals("/api/v3/exchangeInfo", request.url.encodedPath)
         assertNull(request.url.query)
+    }
+
+    @Test
+    fun `listMarkets tags bStocks by their trading group and keeps B-ending coins crypto`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_EXCHANGE_INFO).build())
+
+        val markets = adapter.listMarkets().associateBy { it.nativeSymbol }
+
+        val tsla = markets.getValue("TSLABUSDT")
+        assertEquals(AssetClass.STOCK, tsla.assetClass)
+        assertEquals("TSLA", tsla.underlying)
+        assertEquals(MarketKey.of(ExchangeId.BINANCE, "TSLAB", "USDT"), tsla.key)
+        // The group counts in any of the symbol's permission sets.
+        assertEquals("MU", markets.getValue("MUBUSDT").underlying)
+        // Ending in B is not enough, and the group alone is not enough either.
+        for (symbol in listOf("BNBUSDT", "ARBUSDT", "GROUPUSDT", "NOSETSUSDT", "NULLSETSUSDT")) {
+            val market = markets.getValue(symbol)
+            assertEquals(symbol, AssetClass.CRYPTO, market.assetClass)
+            assertNull(symbol, market.underlying)
+        }
     }
 
     @Test
@@ -245,6 +267,29 @@ class BinanceAdapterRestTest {
              "filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01000000"}]},
             {"symbol":"NOFEUR","status":"TRADING","baseAsset":"NOF","quoteAsset":"EUR","quotePrecision":6,
              "isSpotTradingAllowed":true,"filters":[]}
+          ]
+        }
+        """
+
+        /** `permissionSets` trimmed to a few groups; the live lists hold ~200 ids per symbol. */
+        const val STOCK_EXCHANGE_INFO = """
+        {
+          "symbols": [
+            {"symbol":"TSLABUSDT","status":"TRADING","baseAsset":"TSLAB","quoteAsset":"USDT","isSpotTradingAllowed":true,
+             "filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01000000"}],"permissions":[],
+             "permissionSets":[["SPOT","MARGIN","TRD_GRP_004","TRD_GRP_256","TRD_GRP_261"]]},
+            {"symbol":"MUBUSDT","status":"TRADING","baseAsset":"MUB","quoteAsset":"USDT","isSpotTradingAllowed":true,
+             "filters":[],"permissionSets":[["SPOT","TRD_GRP_004"],["TRD_GRP_261"]]},
+            {"symbol":"BNBUSDT","status":"TRADING","baseAsset":"BNB","quoteAsset":"USDT","isSpotTradingAllowed":true,
+             "filters":[],"permissionSets":[["SPOT","MARGIN","TRD_GRP_004","TRD_GRP_005"]]},
+            {"symbol":"ARBUSDT","status":"TRADING","baseAsset":"ARB","quoteAsset":"USDT","isSpotTradingAllowed":true,
+             "filters":[],"permissionSets":[["SPOT","TRD_GRP_2610"]]},
+            {"symbol":"GROUPUSDT","status":"TRADING","baseAsset":"GROUP","quoteAsset":"USDT","isSpotTradingAllowed":true,
+             "filters":[],"permissionSets":[["SPOT","TRD_GRP_261"]]},
+            {"symbol":"NOSETSUSDT","status":"TRADING","baseAsset":"NOSETS","quoteAsset":"USDT","isSpotTradingAllowed":true,
+             "filters":[]},
+            {"symbol":"NULLSETSUSDT","status":"TRADING","baseAsset":"NULLSETS","quoteAsset":"USDT",
+             "isSpotTradingAllowed":true,"filters":[],"permissionSets":null}
           ]
         }
         """

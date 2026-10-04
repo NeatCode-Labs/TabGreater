@@ -7,6 +7,7 @@ import com.neatcode.tabgreater.core.data.repo.ChartDrawingRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
@@ -319,7 +320,8 @@ class ChartBridgeTest {
         override suspend fun getMarkets(keys: Collection<MarketKey>): Map<MarketKey, Market> =
             known.filter { it.key in keys }.associateBy { it.key }
 
-        override suspend fun search(query: String, limit: Int): List<Market> = emptyList()
+        override suspend fun search(query: String, limit: Int, assetClass: AssetClass?): List<Market> = emptyList()
+        override suspend fun popularStockRoots(limit: Int): List<String> = emptyList()
     }
 
     /** In-memory drawings; every save is also reported on [saved], in order. */

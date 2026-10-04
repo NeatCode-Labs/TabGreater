@@ -3,6 +3,7 @@ package com.neatcode.tabgreater.core.exchange.mexc
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
@@ -62,10 +63,34 @@ class MexcAdapterRestTest {
         assertNull(btc.tickSize)
         assertEquals(6, markets.first { it.nativeSymbol == "ETHBTC" }.pricePrecision)
         assertEquals(9, markets.first { it.nativeSymbol == "PEPEUSDT" }.pricePrecision)
+        assertTrue(markets.all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
 
         val request = server.takeRequest()
         assertEquals("/api/v3/exchangeInfo", request.url.encodedPath)
         assertNull(request.url.query)
+    }
+
+    @Test
+    fun `listMarkets tags tokenized stocks by plate or name, never by meme plates or suffixes`() = runTest {
+        server.enqueue(MockResponse.Builder().code(200).body(STOCK_EXCHANGE_INFO).build())
+
+        val markets = adapter.listMarkets().associateBy { it.nativeSymbol }
+
+        val expected = mapOf(
+            "TSLAXUSDT" to "TSLA",
+            "AAPLONUSDT" to "AAPL",
+            // No plate: the Ondo name gives it away.
+            "SOXLONUSDT" to "SOXL",
+        )
+        for ((symbol, underlying) in expected) {
+            assertEquals(symbol, AssetClass.STOCK, markets.getValue(symbol).assetClass)
+            assertEquals(symbol, underlying, markets.getValue(symbol).underlying)
+        }
+        assertEquals(MarketKey("mexc:TSLAX/USDT"), markets.getValue("TSLAXUSDT").key)
+        for (symbol in listOf("STONKSUSDT", "NEONUSDT", "ELONUSDT", "NULLSUSDT")) {
+            assertEquals(symbol, AssetClass.CRYPTO, markets.getValue(symbol).assetClass)
+            assertNull(symbol, markets.getValue(symbol).underlying)
+        }
     }
 
     @Test
@@ -414,6 +439,33 @@ class MexcAdapterRestTest {
              "isSpotTradingAllowed":false,"filters":[]},
             {"symbol":"WEIRDUSDT","status":"1","baseAsset":"WE.IRD","quoteAsset":"USDT","quotePrecision":4,
              "isSpotTradingAllowed":true,"filters":[]}
+          ]
+        }
+        """
+
+        const val STOCK_EXCHANGE_INFO = """
+        {
+          "symbols":[
+            {"symbol":"TSLAXUSDT","status":"1","baseAsset":"TSLAX","quoteAsset":"USDT","quotePrecision":2,
+             "isSpotTradingAllowed":true,"fullName":"Tesla xStock",
+             "contractAddress":"XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB",
+             "conceptPlateIds":["a","b"],"conceptPlates":["Innovation","Tokenized Stocks"],"st":false},
+            {"symbol":"AAPLONUSDT","status":"1","baseAsset":"AAPLON","quoteAsset":"USDT","quotePrecision":2,
+             "isSpotTradingAllowed":true,"fullName":"Apple (Ondo)",
+             "contractAddress":"0x14c3abF95Cb9C93a8b82C1CdCB76D72Cb87b2d4c",
+             "conceptPlates":["Innovation","Tokenized Stocks"]},
+            {"symbol":"SOXLONUSDT","status":"1","baseAsset":"SOXLON","quoteAsset":"USDT","quotePrecision":2,
+             "isSpotTradingAllowed":true,"fullName":"SOXLON(Ondo)",
+             "contractAddress":"0xd318bBBE6B6E83F74e7aCAEb5e94C08ddbDb44c0","conceptPlates":["Innovation"]},
+            {"symbol":"STONKSUSDT","status":"1","baseAsset":"STONKS","quoteAsset":"USDT","quotePrecision":6,
+             "isSpotTradingAllowed":true,"fullName":"Stonks","contractAddress":"",
+             "conceptPlates":["Stock Meme Tokens","MEME"]},
+            {"symbol":"NEONUSDT","status":"1","baseAsset":"NEON","quoteAsset":"USDT","quotePrecision":4,
+             "isSpotTradingAllowed":true,"fullName":"Neon EVM","contractAddress":"","conceptPlates":["Innovation"]},
+            {"symbol":"ELONUSDT","status":"1","baseAsset":"ELON","quoteAsset":"USDT","quotePrecision":10,
+             "isSpotTradingAllowed":true,"fullName":"Dogelon Mars","contractAddress":"0x7616","conceptPlates":["MEME"]},
+            {"symbol":"NULLSUSDT","status":"1","baseAsset":"NULLS","quoteAsset":"USDT","quotePrecision":4,
+             "isSpotTradingAllowed":true,"fullName":null,"contractAddress":null,"conceptPlates":null}
           ]
         }
         """

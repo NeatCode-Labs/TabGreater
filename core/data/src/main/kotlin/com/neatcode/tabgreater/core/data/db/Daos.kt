@@ -163,30 +163,40 @@ interface MarketDao {
     @Query("SELECT MAX(updated_at) FROM markets WHERE exchange = :exchange")
     suspend fun lastUpdated(exchange: String): Long?
 
-    @Query(
-        """
-        SELECT * FROM markets
-        WHERE active = 1 AND (base LIKE :prefix || '%' OR quote LIKE :prefix || '%' OR (base || '/' || quote) LIKE :pattern)
-        ORDER BY exchange, base, quote
-        LIMIT :limit
-        """,
-    )
-    suspend fun search(prefix: String, pattern: String, limit: Int): List<MarketEntity>
-
     /**
-     * `BASE/QUOTE` search. The `/` pins the base: `("ETH", "USD")` matches `ETH/USD`, `ETH/USDT`,
-     * `ETH/USDC` but never `ETHFI/USD`; the quote stays a prefix. An empty [base] (`"/EUR"`) means
-     * any base.
+     * Prefix search over base, quote and `BASE/QUOTE`. Like every search query here it takes an
+     * [assetClass] id (`null` = every class) and filters on it before the `LIMIT`, so a page of
+     * stock tokens can never crowd the coins out of a crypto search, or the reverse.
      */
     @Query(
         """
         SELECT * FROM markets
-        WHERE active = 1 AND (:base = '' OR base = :base) AND quote LIKE :quotePrefix || '%'
+        WHERE active = 1 AND (base LIKE :prefix || '%' OR quote LIKE :prefix || '%' OR (base || '/' || quote) LIKE :pattern)
+        AND (:assetClass IS NULL OR asset_class = :assetClass)
         ORDER BY exchange, base, quote
         LIMIT :limit
         """,
     )
-    suspend fun searchPair(base: String, quotePrefix: String, limit: Int): List<MarketEntity>
+    suspend fun search(prefix: String, pattern: String, assetClass: String?, limit: Int): List<MarketEntity>
+
+    /**
+     * `BASE/QUOTE` search. The `/` pins the base: `("ETH", "USD")` matches `ETH/USD`, `ETH/USDT`,
+     * `ETH/USDC` but never `ETHFI/USD`; the quote stays a prefix. An empty [base] (`"/EUR"`) means
+     * any base. In the stock class the base may also name the underlying share, so `TSLA/USDT`
+     * finds `TSLAX/USDT` and `TSLAB/USDT`; every other class is untouched by that term.
+     */
+    @Query(
+        """
+        SELECT * FROM markets
+        WHERE active = 1
+        AND (:base = '' OR base = :base OR (:assetClass = 'stock' AND underlying = :base))
+        AND quote LIKE :quotePrefix || '%'
+        AND (:assetClass IS NULL OR asset_class = :assetClass)
+        ORDER BY exchange, base, quote
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchPair(base: String, quotePrefix: String, assetClass: String?, limit: Int): List<MarketEntity>
 
     /**
      * Candidates for the concatenated form (`"BTCEUR"`): every market whose base is a prefix of
@@ -196,11 +206,28 @@ interface MarketDao {
         """
         SELECT * FROM markets
         WHERE active = 1 AND :query LIKE base || '%'
+        AND (:assetClass IS NULL OR asset_class = :assetClass)
         ORDER BY exchange, base, quote
         LIMIT :limit
         """,
     )
-    suspend fun searchConcatCandidates(query: String, limit: Int): List<MarketEntity>
+    suspend fun searchConcatCandidates(query: String, assetClass: String?, limit: Int): List<MarketEntity>
+
+    /**
+     * Distinct underlyings of the active [assetClass] markets on [exchanges], the most widely
+     * listed first: by the number of exchanges that list one, then by its number of markets, then
+     * alphabetically.
+     */
+    @Query(
+        """
+        SELECT underlying FROM markets
+        WHERE active = 1 AND asset_class = :assetClass AND underlying IS NOT NULL AND exchange IN (:exchanges)
+        GROUP BY underlying
+        ORDER BY COUNT(DISTINCT exchange) DESC, COUNT(*) DESC, underlying
+        LIMIT :limit
+        """,
+    )
+    suspend fun popularUnderlyings(assetClass: String, exchanges: List<String>, limit: Int): List<String>
 
     @Upsert
     suspend fun upsertAll(markets: List<MarketEntity>)

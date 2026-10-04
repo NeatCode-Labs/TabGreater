@@ -33,6 +33,9 @@ private val ChipShape = RoundedCornerShape(percent = 50)
  *
  * The ranking comes from CoinGecko; the credit for it lives on the About screen, in the README
  * and in NOTICE rather than in this row, which has no room for it.
+ *
+ * The Stocks scope feeds the same row with plain stock tickers (`TSLA`), ranked from the local
+ * catalogue; a tapped ticker is typed just the same and lists that stock's tokens.
  */
 @Composable
 fun PopularPairsRow(

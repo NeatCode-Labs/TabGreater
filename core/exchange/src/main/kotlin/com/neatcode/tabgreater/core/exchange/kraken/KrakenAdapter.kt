@@ -3,11 +3,14 @@ package com.neatcode.tabgreater.core.exchange.kraken
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
+import com.neatcode.tabgreater.core.exchange.StockTokens
+import com.neatcode.tabgreater.core.exchange.classified
 import com.neatcode.tabgreater.core.exchange.ohlc.CandleAggregator
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.exchange.ws.ExchangeSocket
 import com.neatcode.tabgreater.core.exchange.ws.SocketState
 import com.neatcode.tabgreater.core.exchange.ws.SubscriptionBook
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
@@ -60,6 +63,13 @@ import java.util.concurrent.atomic.AtomicInteger
  *  - the v2 WebSocket symbol (`BTC/EUR`) — identical to our canonical `BASE/QUOTE`, so it is
  *    rebuilt from the key; subscribing with `XBT/EUR` is rejected by the server.
  *
+ * Tokenized shares ("xStocks", [AssetClass.STOCK]) are a separate Kraken asset class with a catalogue
+ * of their own, and every REST call for them (Ticker, OHLC) needs `asset_class=tokenized_asset`.
+ * Their names differ from the above: the REST pair id equals `altname` (`AAPLxUSD`), and the base
+ * keeps a lowercase `x` that Kraken matches case-sensitively — `AAPLX/USD` is rejected by REST and
+ * WebSocket alike. The canonical key is upper-cased as everywhere else (`kraken:AAPLX/USD`), so the
+ * v2 symbol (`AAPLx/USD`) takes its base from the pair id instead of the key.
+ *
  * REST work runs on [Dispatchers.IO] and is paced by a single [TokenBucket] shared by all calls
  * (Kraken tolerates roughly one public request per second before it throttles the IP). Live data
  * goes through one [ExchangeSocket] shared by every collector of this adapter and reference-counted
@@ -93,23 +103,92 @@ class KrakenAdapter(
 
     override suspend fun listMarkets(): List<Market> = withContext(Dispatchers.IO) {
         val result = getResult(PATH_ASSET_PAIRS)
-        json.decodeFromJsonElement<Map<String, AssetPairDto>>(result)
+        val currency = json.decodeFromJsonElement<Map<String, AssetPairDto>>(result)
             .mapNotNull { (nativeSymbol, dto) -> dto.toMarket(nativeSymbol) }
+        // The key is the stored row's identity: should a share ever collide with a coin, the coin keeps it.
+        val taken = currency.mapTo(HashSet()) { it.key }
+        currency + listStockMarkets().filter { it.key !in taken }
     }
 
+    /**
+     * The tokenized catalogue: a second request, made only after the crypto one succeeded.
+     *
+     * Only Kraken *refusing* the class costs just the stocks, and the crypto markets are returned on
+     * their own: HTTP 451 ([ExchangeUnavailableException], not offered in this region), or a
+     * well-formed body whose every `E` error is in [REFUSALS] — `EGeneral:Invalid arguments` is the
+     * live answer to an asset class Kraken does not offer. Every other failure propagates, so the
+     * repository keeps its stored rows and retries on the next refresh: an `IOException`, an
+     * [ExchangeHttpException] carrying any other non-2xx status (429 included), a body that is not
+     * Kraken's envelope, and every other `E` error — the throttle (`EGeneral:Too many requests`) and
+     * the outages Kraken documents as retryable (`EService:Unavailable`, `EGeneral:Internal error`)
+     * arrive with HTTP 200 too. None of those says the class is gone, and answering without it would
+     * delete every Kraken stock row.
+     */
+    private suspend fun listStockMarkets(): List<Market> {
+        val (code, body) = try {
+            get(PATH_ASSET_PAIRS, listOf(PARAM_ACLASS_BASE to ASSET_CLASS_TOKENIZED))
+        } catch (e: ExchangeUnavailableException) {
+            logger("kraken: tokenized catalogue refused (${e.message}), crypto markets only")
+            return emptyList()
+        }
+        val envelope = envelope(PATH_ASSET_PAIRS, code, body)
+        val result = envelope.clean ?: run {
+            if (!envelope.isOnly(REFUSALS)) throw krakenError(code, envelope.detail)
+            logger("kraken: tokenized catalogue refused (${envelope.detail}), crypto markets only")
+            return emptyList()
+        }
+        return json.decodeFromJsonElement<Map<String, AssetPairDto>>(result)
+            .mapNotNull { (nativeSymbol, dto) -> dto.toStockMarket(nativeSymbol) }
+    }
+
+    /**
+     * Kraken refuses a Ticker call that mixes stock tokens with crypto pairs (an `E` error next to
+     * a partial result), so each class gets calls of its own: crypto first and exactly as before,
+     * then the stock tokens with their `asset_class`. A failing stock call is only logged — stock
+     * tokens must never cost the crypto tiles their prices.
+     */
     override suspend fun fetchTickers(markets: List<Market>): List<Ticker> = withContext(Dispatchers.IO) {
         if (markets.isEmpty()) return@withContext emptyList()
-        val byNativeSymbol = markets.associateBy { it.nativeSymbol }
+        val (stocks, currency) = markets.partition { it.assetClass == AssetClass.STOCK }
         val tickers = ArrayList<Ticker>(markets.size)
-        for (chunk in markets.chunked(TICKER_CHUNK)) {
-            val pairs = chunk.joinToString(separator = ",") { it.nativeSymbol }
-            val result = getResult(PATH_TICKER, listOf(PARAM_PAIR to pairs))
-            for ((nativeSymbol, dto) in json.decodeFromJsonElement<Map<String, KrakenTickerDto>>(result)) {
-                val market = byNativeSymbol[nativeSymbol] ?: continue
-                tickers += dto.toTicker(market.key) ?: continue
+        for (chunk in currency.chunked(TICKER_CHUNK)) tickers += fetchTickerChunk(chunk)
+        for (chunk in stocks.chunked(TICKER_CHUNK)) {
+            try {
+                tickers += fetchTickerChunk(chunk)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger("kraken: ${chunk.size} stock ticker(s) failed ${e::class.java.simpleName}: ${e.message}")
             }
         }
         tickers
+    }
+
+    /** One Ticker call for markets of a single asset class. */
+    private suspend fun fetchTickerChunk(chunk: List<Market>): List<Ticker> {
+        val byNativeSymbol = chunk.associateBy { it.nativeSymbol }
+        val pairs = chunk.joinToString(separator = ",") { it.nativeSymbol }
+        val query = listOf(PARAM_PAIR to pairs) + assetClassQuery(chunk.first())
+        val stocks = chunk.first().assetClass == AssetClass.STOCK
+        val result = if (stocks) stockTickers(query) else getResult(PATH_TICKER, query)
+        return json.decodeFromJsonElement<Map<String, KrakenTickerDto>>(result).mapNotNull { (nativeSymbol, dto) ->
+            byNativeSymbol[nativeSymbol]?.let { dto.toTicker(it) }
+        }
+    }
+
+    /**
+     * A stock token Kraken no longer lists (its row lives until the next catalogue refresh) turns the
+     * whole call into `EQuery:Unknown asset pair` — sent next to the tickers of every other pair asked
+     * for. Those are kept, so one stale token cannot cost up to [TICKER_CHUNK] stock tiles their prices.
+     */
+    private suspend fun stockTickers(query: List<Pair<String, String>>): JsonObject {
+        val (code, body) = get(PATH_TICKER, query)
+        val envelope = envelope(PATH_TICKER, code, body)
+        envelope.clean?.let { return it }
+        val partial = envelope.result
+        if (partial == null || !envelope.isOnly(listOf(ERROR_UNKNOWN_ASSET))) throw krakenError(code, envelope.detail)
+        logger("kraken: stock tickers answered in part (${envelope.detail})")
+        return partial
     }
 
     override suspend fun fetchOHLCV(
@@ -141,7 +220,7 @@ class KrakenAdapter(
         val minutes = INTERVAL_MINUTES.getValue(timeframe)
         val result = getResult(
             PATH_OHLC,
-            listOf(PARAM_PAIR to market.nativeSymbol, PARAM_INTERVAL to minutes.toString()),
+            listOf(PARAM_PAIR to market.nativeSymbol, PARAM_INTERVAL to minutes.toString()) + assetClassQuery(market),
         )
         val rows = (result[market.nativeSymbol] ?: result.entries.firstOrNull { it.key != KEY_LAST }?.value)
             as? JsonArray ?: return emptyList()
@@ -185,21 +264,49 @@ class KrakenAdapter(
 
     private fun AssetPairDto.toMarket(nativeSymbol: String): Market? {
         if (status != STATUS_ONLINE) return null
+        val (base, quote) = assets() ?: return null
+        return market(nativeSymbol, base, quote)
+    }
+
+    /**
+     * A tokenized share. Kraken lists each one twice under the same `altname` and `wsname`: the id
+     * equal to `altname` (`AAPLxUSD`) quotes one token as one share, which is what Ticker, OHLC and
+     * the v2 symbol `AAPLx/USD` serve, while its twin (`AAPLSPVUSD`) prices the raw on-chain token,
+     * i.e. the share times its dividend multiplier. Only the first is kept, so every share appears
+     * once and REST agrees with the stream. Shares trade 24/5 and most sit in `post_only` over the
+     * weekend; that still counts as listed, or each weekend's refresh would delete them. `BRK.Bx`
+     * (the only base with a dot on 2026-10-04) fails [SYMBOL_PART] and is skipped like any other.
+     */
+    private fun AssetPairDto.toStockMarket(nativeSymbol: String): Market? {
+        if (status != STATUS_ONLINE && status != STATUS_POST_ONLY) return null
+        if (nativeSymbol != altname) return null
+        val (base, quote) = assets() ?: return null
+        return market(nativeSymbol, base, quote).classified(StockTokens.kraken(base))
+    }
+
+    /** Base and quote from `wsname`, aliases applied, or `null` when either is unusable. */
+    private fun AssetPairDto.assets(): Pair<String, String>? {
         val name = wsname ?: return null
         val slash = name.indexOf('/')
         if (slash <= 0 || slash == name.lastIndex) return null
         val base = alias(name.substring(0, slash))
         val quote = alias(name.substring(slash + 1))
         if (!SYMBOL_PART.matches(base) || !SYMBOL_PART.matches(quote)) return null
-        return Market(
-            key = MarketKey.of(ExchangeId.KRAKEN, base, quote),
-            nativeSymbol = nativeSymbol,
-            pricePrecision = pairDecimals,
-            tickSize = tickSize?.toDoubleOrNull(),
-        )
+        return base to quote
     }
 
+    private fun AssetPairDto.market(nativeSymbol: String, base: String, quote: String): Market = Market(
+        key = MarketKey.of(ExchangeId.KRAKEN, base, quote),
+        nativeSymbol = nativeSymbol,
+        pricePrecision = pairDecimals,
+        tickSize = tickSize?.toDoubleOrNull(),
+    )
+
     private fun alias(asset: String): String = ASSET_ALIASES[asset] ?: asset
+
+    /** The parameter every Ticker and OHLC call for a stock token needs; crypto calls carry none. */
+    private fun assetClassQuery(market: Market): List<Pair<String, String>> =
+        if (market.assetClass == AssetClass.STOCK) listOf(PARAM_ASSET_CLASS to ASSET_CLASS_TOKENIZED) else emptyList()
 
     /**
      * `o` is Kraken's *today* open (since 00:00 UTC), the only open REST exposes — there is no
@@ -209,24 +316,35 @@ class KrakenAdapter(
      * Consumers fall back to the 24 h candle window instead (tiles: `windowChange`; widget:
      * `WidgetModelFactory`), and the socket fills the rolling figure in when it is connected.
      */
-    private fun KrakenTickerDto.toTicker(key: MarketKey): Ticker? {
-        val last = lastTrade.firstOrNull()?.toDoubleOrNull() ?: return null
+    private fun KrakenTickerDto.toTicker(market: Market): Ticker? {
+        val last = lastTrade.firstOrNull()?.toDoubleOrNull().priceOf(market) ?: return null
         val volume = volume24h.getOrNull(IDX_ROLLING_24H)?.toDoubleOrNull()
         val vwap = vwap24h.getOrNull(IDX_ROLLING_24H)?.toDoubleOrNull()
         return Ticker(
-            key = key,
+            key = market.key,
             last = last,
             open24h = null,
-            high24h = high24h.getOrNull(IDX_ROLLING_24H)?.toDoubleOrNull(),
-            low24h = low24h.getOrNull(IDX_ROLLING_24H)?.toDoubleOrNull(),
+            high24h = high24h.getOrNull(IDX_ROLLING_24H)?.toDoubleOrNull().priceOf(market),
+            low24h = low24h.getOrNull(IDX_ROLLING_24H)?.toDoubleOrNull().priceOf(market),
             volumeBase24h = volume,
             volumeQuote24h = if (volume != null && vwap != null) volume * vwap else null,
             changePct24h = null,
-            bid = bid.firstOrNull()?.toDoubleOrNull(),
-            ask = ask.firstOrNull()?.toDoubleOrNull(),
+            bid = bid.firstOrNull()?.toDoubleOrNull().priceOf(market),
+            ask = ask.firstOrNull()?.toDoubleOrNull().priceOf(market),
             timestamp = System.currentTimeMillis(),
         )
     }
+
+    /**
+     * Kraken fills the prices of a stock token that has not traded (REST `c`, `h`, `l`, stream `last`,
+     * `high`, `low`) and of an empty side of its book (`a`, `b`, `bid`, `ask`) with literal zeros: on
+     * Sunday 2026-10-04 REST had no last trade for 48 of 176 shares, the stream none for 54, most of
+     * them stamped 1970. A zero would reach the tile as a real price (`0.00`, `-100.00%`), so for a stock
+     * token a price that is not positive is missing, and a ticker without a last price is dropped.
+     * Crypto values pass through exactly as before.
+     */
+    private fun Double?.priceOf(market: Market): Double? =
+        if (this != null && this <= 0.0 && market.assetClass == AssetClass.STOCK) null else this
 
     private fun changePct(last: Double, open: Double): Double? =
         if (open == 0.0) null else (last - open) / open * PERCENT
@@ -238,6 +356,12 @@ class KrakenAdapter(
      */
     private suspend fun getResult(path: String, query: List<Pair<String, String>> = emptyList()): JsonObject {
         val (code, body) = get(path, query)
+        val envelope = envelope(path, code, body)
+        return envelope.clean ?: throw krakenError(code, envelope.detail)
+    }
+
+    /** Parses a 2xx [body]; one that is not Kraken's JSON envelope at all throws right away. */
+    private fun envelope(path: String, code: Int, body: String): Envelope {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull() as? JsonObject
             ?: throw ExchangeHttpException(id, code, "Kraken sent a malformed body: ${body.take(ERROR_BODY_CHARS)}")
         val messages = (root[KEY_ERROR] as? JsonArray)
@@ -246,8 +370,21 @@ class KrakenAdapter(
         val (fatal, warnings) = messages.partition { it.startsWith(ERROR_MARKER) }
         if (warnings.isNotEmpty()) logger("kraken: $path warned ${warnings.joinToString()}")
         val result = root[KEY_RESULT] as? JsonObject
-        if (fatal.isEmpty() && result != null) return result
-        throw krakenError(code, fatal.ifEmpty { messages }.joinToString().ifEmpty { NO_RESULT })
+        return Envelope(result, if (fatal.isEmpty() && result == null) messages else fatal)
+    }
+
+    /**
+     * A Kraken answer: its [result], if any, and the [errors] — the `E` messages, or for an answer
+     * without either, whatever warnings came instead.
+     */
+    private class Envelope(val result: JsonObject?, val errors: List<String>) {
+        /** The result, provided no error came with it. */
+        val clean: JsonObject? get() = result?.takeIf { errors.isEmpty() }
+        val detail: String get() = errors.joinToString().ifEmpty { NO_RESULT }
+
+        /** Whether there are errors and each one starts with one of [prefixes]. */
+        fun isOnly(prefixes: List<String>): Boolean =
+            errors.isNotEmpty() && errors.all { error -> prefixes.any { error.startsWith(it) } }
     }
 
     /**
@@ -310,7 +447,7 @@ class KrakenAdapter(
                 .collect { text ->
                     for (dto in channelData<KrakenWsTickerDto>(text, CHANNEL_TICKER)) {
                         val market = bySymbol[dto.symbol] ?: continue
-                        this@channelFlow.send(dto.toTicker(market.key) ?: continue)
+                        this@channelFlow.send(dto.toTicker(market) ?: continue)
                     }
                 }
         } finally {
@@ -565,22 +702,23 @@ class KrakenAdapter(
 
     /**
      * `change` is the rolling 24 h move, which is exactly the open REST cannot give us. A frame
-     * without `last` carries no price at all, so it is dropped rather than reported as 0.
+     * without `last` carries no price at all, so it is dropped rather than reported as 0; so is a
+     * stock token's zero ([priceOf]).
      */
-    private fun KrakenWsTickerDto.toTicker(key: MarketKey): Ticker? {
-        val last = last ?: return null
+    private fun KrakenWsTickerDto.toTicker(market: Market): Ticker? {
+        val last = last.priceOf(market) ?: return null
         val open = change?.let { last - it }
         return Ticker(
-            key = key,
+            key = market.key,
             last = last,
             open24h = open,
-            high24h = high,
-            low24h = low,
+            high24h = high.priceOf(market),
+            low24h = low.priceOf(market),
             volumeBase24h = volume,
             volumeQuote24h = if (volume != null && vwap != null) volume * vwap else null,
             changePct24h = changePct ?: open?.let { changePct(last, it) },
-            bid = bid,
-            ask = ask,
+            bid = bid.priceOf(market),
+            ask = ask.priceOf(market),
             timestamp = epochMillisOf(timestamp),
         )
     }
@@ -600,7 +738,19 @@ class KrakenAdapter(
     private fun epochMillisOf(timestamp: String?): Long =
         timestamp?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: System.currentTimeMillis()
 
-    private fun wsSymbol(market: Market): String = "${market.key.base}/${market.key.quote}"
+    /**
+     * The v2 symbol: the canonical pair for crypto (`BTC/EUR`). A stock token's base keeps Kraken's
+     * lowercase `x` (`AAPLx/USD`), which the upper-cased key has lost, so it is read back from the
+     * REST pair id (`AAPLxUSD`) that begins with it.
+     */
+    private fun wsSymbol(market: Market): String {
+        val base = market.key.base
+        val native = market.nativeSymbol
+        if (market.assetClass == AssetClass.STOCK && native.startsWith(base, ignoreCase = true)) {
+            return "${native.take(base.length)}/${market.key.quote}"
+        }
+        return "$base/${market.key.quote}"
+    }
 
     private fun tickerKey(symbol: String): String = "$CHANNEL_TICKER$KEY_SEPARATOR$symbol"
 
@@ -629,6 +779,11 @@ class KrakenAdapter(
         private const val PARAM_PAIR = "pair"
         private const val PARAM_INTERVAL = "interval"
 
+        /** AssetPairs names the class of a pair's base `aclass_base`; Ticker and OHLC call it `asset_class`. */
+        private const val PARAM_ACLASS_BASE = "aclass_base"
+        private const val PARAM_ASSET_CLASS = "asset_class"
+        private const val ASSET_CLASS_TOKENIZED = "tokenized_asset"
+
         /** One `Ticker` call handles every pair we ask for; chunked anyway to keep the URL sane. */
         private const val TICKER_CHUNK = 100
 
@@ -638,6 +793,9 @@ class KrakenAdapter(
         private const val PERCENT = 100.0
 
         private const val STATUS_ONLINE = "online"
+
+        /** Accepts only maker orders; tokenized shares sit in it whenever their market is closed. */
+        private const val STATUS_POST_ONLY = "post_only"
         private val SYMBOL_PART = Regex("[A-Za-z0-9]+")
 
         /** Kraken's own names for two assets everybody else spells differently. */
@@ -682,6 +840,15 @@ class KrakenAdapter(
 
         private const val ERROR_MARKER = "E"
         private const val RATE_LIMIT_MARKER = "Too many requests"
+
+        /** Also the prefix of `EQuery:Unknown asset pair`, the answer naming a pair Kraken does not list. */
+        private const val ERROR_UNKNOWN_ASSET = "EQuery:Unknown asset"
+
+        /**
+         * The errors that say Kraken does not offer what was asked for, as opposed to failing to answer:
+         * `EGeneral:Invalid arguments` is its answer to an unknown asset class (checked live on 2026-10-04).
+         */
+        private val REFUSALS = listOf("EGeneral:Invalid arguments", ERROR_UNKNOWN_ASSET)
         private const val NO_RESULT = "response without a result"
         private const val ERROR_BODY_CHARS = 200
         private const val HEADER_RETRY_AFTER = "Retry-After"
@@ -703,6 +870,8 @@ class KrakenAdapter(
 
 @Serializable
 private data class AssetPairDto(
+    /** Kraken's alternate pair name (`XBTEUR`); for a stock token it tells the share-equivalent id. */
+    val altname: String? = null,
     /** v1 WebSocket name (`XBT/EUR`); the only field that carries base and quote separately. */
     val wsname: String? = null,
     @SerialName("pair_decimals") val pairDecimals: Int = 0,

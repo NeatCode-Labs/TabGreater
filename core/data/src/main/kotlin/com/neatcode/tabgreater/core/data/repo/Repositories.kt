@@ -1,5 +1,6 @@
 package com.neatcode.tabgreater.core.data.repo
 
+import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.ImportMode
 import com.neatcode.tabgreater.core.model.ImportResult
@@ -106,8 +107,19 @@ interface MarketRepository {
      * Without a `/` every part is prefix-matched ("eth" -> ETH/USDT, ETHFI/USDT, ...); with a `/`
      * the base is exact and only the quote is a prefix ("eth/usd" -> ETH/USD, ETH/USDT, ETH/USDC).
      * Results ordered by exchange, then base, then quote.
+     *
+     * [assetClass] narrows the result to one class; `null` returns every class. A
+     * [AssetClass.STOCK] search lists the tokens whose [Market.underlying] equals the typed base
+     * ("tsla" -> every TSLA token) before the rest, each group in the usual order.
      */
-    suspend fun search(query: String, limit: Int = 300): List<Market>
+    suspend fun search(query: String, limit: Int = 300, assetClass: AssetClass? = null): List<Market>
+
+    /**
+     * Up to [limit] underlyings of the cached stock tokens, the most widely listed first: by the
+     * number of exchanges that list one, then by its number of markets, then alphabetically.
+     * Reads the local catalogue only (no network); empty while it holds no stock token.
+     */
+    suspend fun popularStockRoots(limit: Int = 8): List<String>
 
     companion object {
         const val MAX_AGE_MS: Long = 24L * 60 * 60 * 1000
