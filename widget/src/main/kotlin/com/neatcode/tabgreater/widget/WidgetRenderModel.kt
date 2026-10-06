@@ -65,8 +65,11 @@ internal object WidgetModelFactory {
         spark: List<Float>,
         now: Long,
         zone: ZoneId = ZoneId.systemDefault(),
+        confirmedAtEpochMs: Long? = ticker?.timestamp,
+        isStale: Boolean? = null,
+        historyAnchor: Double? = spark.firstOrNull()?.toDouble(),
     ): WidgetRenderModel {
-        val changePct = ticker?.let { it.changePct24h ?: derivedChangePct(it) ?: windowChangePct(it, spark) }
+        val changePct = ticker?.let { it.changePct24h ?: derivedChangePct(it) ?: windowChangePct(it, historyAnchor) }
         val precision = pricePrecision ?: fallbackPrecision(ticker?.last)
         return WidgetRenderModel(
             key = config.key.value,
@@ -76,8 +79,8 @@ internal object WidgetModelFactory {
             change = PriceFormat.formatChangePct(changePct),
             changeUp = (changePct ?: 0.0) >= 0.0,
             hasData = ticker != null,
-            stale = ticker == null || now - ticker.timestamp > STALE_AFTER_MS,
-            updatedLabel = ticker?.let { clockOf(it.timestamp, zone) }.orEmpty(),
+            stale = isStale ?: (ticker == null || now - ticker.timestamp > STALE_AFTER_MS),
+            updatedLabel = confirmedAtEpochMs?.let { clockOf(it, zone) }.orEmpty(),
             backgroundArgb = config.blendedArgb,
             showSparkline = config.showSparkline,
             spark = spark,
@@ -106,8 +109,8 @@ internal object WidgetModelFactory {
      * (Kraken): measure across the 24 h sparkline window, whose first point is the real close of
      * 24 h ago (`downsampleCloses` keeps the first sample exact).
      */
-    private fun windowChangePct(ticker: Ticker, spark: List<Float>): Double? {
-        val first = spark.firstOrNull()?.toDouble() ?: return null
+    private fun windowChangePct(ticker: Ticker, historyAnchor: Double?): Double? {
+        val first = historyAnchor ?: return null
         if (first <= 0.0 || !first.isFinite()) return null
         return (ticker.last - first) / first * 100.0
     }

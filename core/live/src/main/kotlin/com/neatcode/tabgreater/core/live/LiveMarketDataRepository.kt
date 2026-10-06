@@ -1,6 +1,13 @@
 package com.neatcode.tabgreater.core.live
 
 import android.util.Log
+import android.os.SystemClock
+import com.neatcode.tabgreater.core.exchange.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import com.neatcode.tabgreater.core.data.db.TickerSnapshotDao
 import com.neatcode.tabgreater.core.data.db.TickerSnapshotEntity
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
@@ -55,9 +62,27 @@ class LiveMarketDataRepository(
     private val markets: MarketRepository,
     private val registry: ExchangeRegistry,
     private val scope: CoroutineScope,
+    private val elapsed: () -> Long = SystemClock::elapsedRealtime,
+    private val epoch: () -> Long = System::currentTimeMillis,
 ) : MarketDataRepository {
 
     private val tracker = SubscriptionTracker()
+    private val accepted = MutableStateFlow<Map<MarketKey, MarketState>>(emptyMap())
+    private val writeLock = Mutex()
+    private val versions = mutableMapOf<MarketKey, Long>()
+    private val wsTimes = mutableMapOf<MarketKey, Long>()
+    private val restFlights = BatchSingleFlight<MarketKey, RefreshResult>()
+    private val lastAttempt = ConcurrentHashMap<MarketKey, Long>()
+
+    override fun currentState(key: MarketKey): MarketState? = accepted.value[key]?.aged(elapsed())
+
+    override fun observeMarketState(keys: Set<MarketKey>): Flow<Map<MarketKey, MarketState>> = combine(
+        observeTickers(keys), accepted,
+        flow { while (true) { emit(elapsed()); delay(STATUS_TICK_MS) } },
+    ) { tickers, states, now ->
+        keys.associateWith { key -> (states[key]?.let { it.copy(ticker = it.ticker ?: tickers[key]) } ?: MarketState(tickers[key])).aged(now) }
+    }.distinctUntilChanged()
+
     private val live = MutableStateFlow<Map<MarketKey, Ticker>>(emptyMap())
 
     override val latest: StateFlow<Map<MarketKey, Ticker>> get() = live
@@ -104,11 +129,12 @@ class LiveMarketDataRepository(
         // every tab switch and on every added ticker, and a full round per event (KuCoin: one
         // request per market for small sets) is exactly the kind of burst that gets an IP
         // rate-limited.
-        launch { refresh(wanted.filter { needsRestSnapshot(it) }) }
+        launch { refreshWhileObserved(wanted) }
 
         try {
             combine(
-                snapshotDao.observeByKeys(wanted.map { it.value }),
+                snapshotDao.observeByKeys(wanted.map { it.value })
+                    .catch { e -> Log.w(TAG, "snapshot read failed", e); emit(emptyList()) },
                 live,
             ) { rows, liveTickers -> mergeTickers(rows, liveTickers, wanted) }
                 .collect { send(it) }
@@ -117,31 +143,100 @@ class LiveMarketDataRepository(
         }
     }.conflate()
 
-    // Exchanges refresh concurrently: Kraken paces itself at 1 request/s and KuCoin needs one
-    // call per market for small sets, so a sequential round would hold back the others' snapshots.
-    override suspend fun refresh(keys: Collection<MarketKey>) {
-        val byExchange = keys.filter { registry.getOrNull(it.exchange) != null }.groupBy { it.exchange }
-        if (byExchange.isEmpty()) return
-        coroutineScope {
-            for ((exchange, exchangeKeys) in byExchange) {
-                val adapter = registry.getOrNull(exchange) ?: continue
-                launch {
-                    try {
-                        val resolved = resolveMarkets(exchange, exchangeKeys.toSet())
-                        if (resolved.isNotEmpty()) {
-                            val fetched = adapter.fetchTickers(resolved)
-                            val now = System.currentTimeMillis()
-                            for (ticker in fetched) lastRestAt[ticker.key] = now
-                            persist(fetched)
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.w(TAG, "REST refresh failed for ${exchange.id}", e)
-                    }
+    override suspend fun refresh(keys: Collection<MarketKey>) { refreshResult(keys) }
+
+    override suspend fun refreshResult(keys: Collection<MarketKey>): RefreshResult = coroutineScope {
+        val results = keys.distinct().groupBy { it.exchange }.map { (exchange, requested) -> async {
+            restFlights.run(requested.toSet()) { owned ->
+                val result = fetchBatch(exchange, owned)
+                owned.associateWith { key -> RefreshResult(
+                    successful = result.successful.intersect(setOf(key)),
+                    missing = result.missing.intersect(setOf(key)),
+                    failures = result.failures.filterKeys { it == key },
+                ) }
+            }.values
+        } }.awaitAll().flatten()
+        RefreshResult(results.flatMap { it.successful }.toSet(), results.flatMap { it.missing }.toSet(),
+            results.flatMap { it.failures.entries }.associate { it.key to it.value })
+    }
+
+    private suspend fun fetchBatch(exchange: ExchangeId, requested: Set<MarketKey>): RefreshResult {
+        val adapter = registry.getOrNull(exchange) ?: return RefreshResult(missing = requested)
+        val started = writeLock.withLock { requested.associateWith { versions[it] ?: 0L } }
+        requested.forEach { lastAttempt[it] = elapsed() }
+        return try {
+            val batch = adapter.fetchTickerBatch(resolveMarkets(exchange, requested))
+            val missing = requested - batch.values.keys - batch.failures.keys
+            writeLock.withLock {
+                for ((key, ticker) in batch.values) {
+                    // A response cannot displace a price confirmed since its request started.
+                    if ((versions[key] ?: 0L) == started[key]) acceptLocked(ticker, true)
+                    lastRestAt[key] = elapsed()
+                }
+                for (key in missing) if ((versions[key] ?: 0L) == started[key]) markFailure(key, ExchangeFailureKind.INVALID_MARKET)
+                for ((key, error) in batch.failures) if ((versions[key] ?: 0L) == started[key])
+                    markFailure(key, error.exchangeFailureKind(), error.retryDelayMs())
+            }
+            persist(batch.values.values.toList())
+            RefreshResult(batch.values.keys, missing, batch.failures)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            writeLock.withLock {
+                requested.filter { (versions[it] ?: 0L) == started[it] }
+                    .forEach { markFailure(it, e.exchangeFailureKind(), e.retryDelayMs()) }
+            }
+            RefreshResult(failures = requested.associateWith { e })
+        }
+    }
+
+    /** Active consumers own recovery; a worker's one-shot refresh never waits through cooldowns. */
+    private suspend fun refreshWhileObserved(keys: Set<MarketKey>) {
+        var wanted = keys.filter { needsRestSnapshot(it) }
+        var attempt = 0
+        while (currentCoroutineContext().isActive) {
+            val result = refreshResult(wanted)
+            val retryable = result.failures.filterValues { it.canRetryAutomatically() }
+            if (retryable.isNotEmpty() && attempt < 5) {
+                val pause = longArrayOf(5_000, 10_000, 20_000, 40_000, 60_000)[attempt++]
+                delay(maxOf(pause + kotlin.random.Random.nextLong(pause / 5 + 1), retryable.values.maxOf { it.retryDelayMs() }))
+                wanted = retryable.keys.toList()
+            } else {
+                delay(900_000)
+                attempt = 0
+                wanted = keys.filter { key ->
+                    val state = currentState(key)
+                    needsRestSnapshot(key) && state?.failure !in setOf(
+                        ExchangeFailureKind.FORBIDDEN, ExchangeFailureKind.REGION_RESTRICTED,
+                        ExchangeFailureKind.INVALID_MARKET, ExchangeFailureKind.INVALID_RESPONSE,
+                    )
                 }
             }
         }
+    }
+
+    private fun markFailure(key: MarketKey, failure: ExchangeFailureKind, retry: Long = 0) {
+        accepted.update { values -> values + (key to (values[key] ?: MarketState()).copy(failure = failure, retryAfterMs = retry)) }
+    }
+
+    /** Caller holds writeLock, shared with disk writes so pending batches cannot regress Room. */
+    private fun acceptLocked(ticker: Ticker, rest: Boolean) {
+        if (!ticker.last.isFinite() || ticker.last <= 0) return
+        val previous = accepted.value[ticker.key]
+        val value = if (!ticker.confirmsPrice && previous?.ticker != null)
+            previous.ticker.copy(bid = ticker.bid, ask = ticker.ask) else ticker
+        if (!rest && ticker.confirmsPrice) {
+            val previousTime = wsTimes[ticker.key]
+            if (previousTime != null && ticker.timestamp > 0 && ticker.timestamp < previousTime) return
+            wsTimes[ticker.key] = ticker.timestamp
+        }
+        if (ticker.confirmsPrice || rest) versions[ticker.key] = (versions[ticker.key] ?: 0L) + 1
+        live.update { it + (ticker.key to value) }
+        accepted.update { it + (ticker.key to MarketState(
+            ticker = value,
+            confirmedAtElapsedMs = if (ticker.confirmsPrice || rest) elapsed() else previous?.confirmedAtElapsedMs,
+            confirmedAtEpochMs = if (ticker.confirmsPrice || rest) epoch() else previous?.confirmedAtEpochMs,
+            failure = if (ticker.confirmsPrice || rest) null else previous?.failure,
+        ).aged(elapsed())) }
     }
 
     /**
@@ -149,14 +244,14 @@ class LiveMarketDataRepository(
      * need another request on re-subscribe — the socket is already keeping it current.
      */
     private fun needsRestSnapshot(key: MarketKey): Boolean {
-        val now = System.currentTimeMillis()
-        val rest = lastRestAt[key]
+        val now = elapsed()
+        val rest = lastAttempt[key]
         if (rest != null && now - rest < REST_COOLDOWN_MS) return false
-        val liveAt = live.value[key]?.timestamp
+        val liveAt = accepted.value[key]?.confirmedAtElapsedMs
         return liveAt == null || now - liveAt >= REST_COOLDOWN_MS
     }
 
-    /** Room snapshot first, live update wins when its timestamp is at least as new. */
+    /** Accepted in-process values win over disk, regardless of the provider timestamp convention. */
     private fun mergeTickers(
         rows: List<TickerSnapshotEntity>,
         liveTickers: Map<MarketKey, Ticker>,
@@ -170,7 +265,7 @@ class LiveMarketDataRepository(
         for (key in wanted) {
             val update = liveTickers[key] ?: continue
             val current = merged[key]
-            if (current == null || update.timestamp >= current.timestamp) merged[key] = update
+            if (accepted.value[key]?.ticker != null || current == null || update.timestamp >= current.timestamp) merged[key] = update
         }
         return merged
     }
@@ -229,7 +324,7 @@ class LiveMarketDataRepository(
                         val now = System.currentTimeMillis()
                         lastMessageAt[exchange] = now
                         setState(exchange, StreamState.ACTIVE)
-                        live.update { it + (ticker.key to ticker) }
+                        writeLock.withLock { acceptLocked(ticker, false) }
                         pending[ticker.key] = ticker
                         if (now - lastPersist >= PERSIST_INTERVAL_MS) {
                             lastPersist = now
@@ -258,7 +353,7 @@ class LiveMarketDataRepository(
     private suspend fun resolveMarkets(exchange: ExchangeId, keys: Set<MarketKey>): List<Market> {
         var found = markets.getMarkets(keys)
         if (found.size < keys.size) {
-            markets.refreshMarkets(exchange)
+            markets.refreshMarkets(exchange).getOrThrow()
             found = markets.getMarkets(keys)
         }
         return keys.mapNotNull { found[it] }
@@ -267,7 +362,10 @@ class LiveMarketDataRepository(
     private suspend fun persist(tickers: List<Ticker>) {
         if (tickers.isEmpty()) return
         try {
-            snapshotDao.upsertAll(tickers.map { it.toSnapshotEntity() })
+            writeLock.withLock {
+                val newest = tickers.mapNotNull { live.value[it.key] }.distinctBy { it.key }
+                snapshotDao.upsertAll(newest.map { it.toSnapshotEntity() })
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

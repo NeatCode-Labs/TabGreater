@@ -1,5 +1,10 @@
 package com.neatcode.tabgreater.core.exchange.kucoin
 
+import com.neatcode.tabgreater.core.exchange.TickerBatch
+import com.neatcode.tabgreater.core.exchange.tickerBatches
+import com.neatcode.tabgreater.core.exchange.tickerBatch
+import com.neatcode.tabgreater.core.exchange.ExchangeRequests
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
@@ -115,6 +120,10 @@ class KuCoinAdapter(
      * Small sets go through `/market/stats` (one request per market, but a tiny response); larger
      * ones through the single `/market/allTickers` dump, which is cheaper than a dozen round trips.
      */
+    override suspend fun fetchTickerBatch(markets: List<Market>): TickerBatch =
+        if (markets.size <= STATS_THRESHOLD) tickerBatches(markets.map { listOf(it) }, ::fetchTickers)
+        else tickerBatch(markets) { fetchTickers(markets) }
+
     override suspend fun fetchTickers(markets: List<Market>): List<Ticker> = withContext(Dispatchers.IO) {
         if (markets.isEmpty()) return@withContext emptyList()
         if (markets.size <= STATS_THRESHOLD) fetchStats(markets) else fetchAllTickers(markets)
@@ -188,12 +197,8 @@ class KuCoinAdapter(
         execute(Request.Builder().url(url).post(EMPTY_BODY.toRequestBody()).build())
     }
 
-    private fun execute(request: Request): String =
-        client.newCall(request).execute().use { response ->
-            val body = response.body.string()
-            if (!response.isSuccessful) throw errorFor(response, body)
-            body
-        }
+    private suspend fun execute(request: Request): String =
+        ExchangeRequests.execute(id, client, request, ::errorFor).body
 
     private fun errorFor(response: Response, body: String): Exception {
         val code = response.code

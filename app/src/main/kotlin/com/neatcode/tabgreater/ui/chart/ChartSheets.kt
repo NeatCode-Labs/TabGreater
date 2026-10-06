@@ -28,6 +28,7 @@ fun ChartSheets(
     onMagnetMode: (MagnetMode) -> Unit = {},
     onDrawingsVisible: (Boolean) -> Unit = {},
     onDeleteAllDrawings: () -> Unit = {},
+    enabled: Boolean = true,
     immersive: Boolean = false,
 ) {
     when (sheet) {
@@ -39,12 +40,14 @@ fun ChartSheets(
                 onDismiss()
             },
             onDismiss = onDismiss,
+            enabled = enabled,
             immersive = immersive,
         )
         ChartSheet.INDICATORS -> IndicatorsSheet(
             selected = state.settings.indicators,
             onToggle = onToggleIndicator,
             onDismiss = onDismiss,
+            enabled = enabled,
             immersive = immersive,
         )
         ChartSheet.DRAWING -> DrawingSheet(
@@ -62,6 +65,7 @@ fun ChartSheets(
                 onDeleteAllDrawings()
             },
             onDismiss = onDismiss,
+            enabled = enabled,
             immersive = immersive,
         )
     }
@@ -73,6 +77,7 @@ private fun CandleTypeSheet(
     selected: CandleType,
     onSelect: (CandleType) -> Unit,
     onDismiss: () -> Unit,
+    enabled: Boolean,
     immersive: Boolean = false,
 ) {
     TGBottomSheet(onDismiss = onDismiss, title = stringResource(R.string.chart_type_title), immersive = immersive) {
@@ -81,6 +86,7 @@ private fun CandleTypeSheet(
                 label = stringResource(type.labelRes),
                 checked = type == selected,
                 onClick = { onSelect(type) },
+                enabled = enabled,
             )
         }
     }
@@ -96,6 +102,7 @@ private fun IndicatorsSheet(
     selected: List<IndicatorSpec>,
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
+    enabled: Boolean,
     immersive: Boolean = false,
 ) {
     TGBottomSheet(onDismiss = onDismiss, title = stringResource(R.string.chart_indicators_title), immersive = immersive) {
@@ -105,6 +112,7 @@ private fun IndicatorsSheet(
                 checked = selected.any { it.name == spec.name },
                 onClick = { onToggle(spec.name) },
                 trailingText = spec.paramsLabel,
+                enabled = enabled,
             )
         }
     }

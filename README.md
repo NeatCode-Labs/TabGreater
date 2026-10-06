@@ -30,7 +30,8 @@
 TabGreater is a free, open-source Android watchlist for spot crypto markets.
 It shows live prices from five exchanges on sparkline tiles, opens a full
 candlestick chart with indicators for any pair, and keeps one-pair widgets on
-your home screen fresh — without a notification. Your phone talks to the
+your home screen fresh through Android's foreground service. Android may show a
+service notice, depending on its version and settings. Your phone talks to the
 exchanges directly: there is no backend, no account and nothing is collected.
 
 ## Highlights
@@ -56,8 +57,9 @@ exchanges directly: there is no backend, no account and nothing is collected.
 - **Widgets** — one pair per widget. Drops as 2 × 1 and resizes freely from
   110 × 40 dp up to 4 × 2 and beyond, always drawing the same layout. The
   sparkline is a switch, on by default, and always shows the last 24 h. Refresh
-  cadence of your choice, from every 15 minutes to live, with no notification;
-  three widgets at the default 5-minute cadence cost about 1.5 % battery a day.
+  cadence of your choice, from every 15 minutes to live, using Android's
+  foreground service (the system controls how its notice appears);
+  battery use depends on the refresh cadence, device and network conditions.
 - **Quick add** — the five biggest coins that are not stablecoins or wrapped
   tokens are one tap away when you add a pair (ranking from CoinGecko,
   refreshed daily); under *Stocks*, the eight tickers listed on the most
@@ -102,7 +104,9 @@ tagged.
 Android 8.0 (API 26) or newer. APK installs may require temporarily allowing
 your browser or file manager to install unknown apps.
 
-Widgets refresh through a foreground service that shows **no** notification.
+Widgets refresh through a foreground service. Android requires an ongoing
+service notification; the app does not request `POST_NOTIFICATIONS`, and the
+notification's visibility depends on Android version and system settings.
 On phones with aggressive battery management (One UI, MIUI, …) set the app to
 *Unrestricted* battery use — **Settings → WIDGETS → Battery optimisation** in
 the app walks you through it.
@@ -179,8 +183,11 @@ Acquisition Corp.
 
 Android only lets an app refresh a widget on a reliable schedule from a
 foreground service, and only exact alarms survive Doze at the cadence you pick.
-The service shows no notification, and the app never asks for notification
-permission. The Google Play build drops the exact-alarm and
+The app does not request `POST_NOTIFICATIONS`. On Android 13 and later, when
+that permission is not granted, Android hides the foreground-service notice
+from the notification drawer but still lists the service in Task Manager. On
+Android 12 and earlier, a service notice may appear in the notification shade.
+The Google Play build drops the exact-alarm and
 battery-optimisation permissions to comply with Play policy.
 
 </details>

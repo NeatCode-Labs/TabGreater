@@ -1,6 +1,6 @@
 # Privacy policy
 
-*TabGreater, by NeatCode Labs — last updated 2026-10-04*
+*TabGreater, by NeatCode Labs — last updated 2026-10-06*
 
 ## What TabGreater collects
 
@@ -21,10 +21,10 @@ Watchlists, chart drawings (including any text you add to them), settings, widge
 | Permission | Why |
 |---|---|
 | Internet, network state | fetching prices from the exchanges and the daily popular-pairs list |
-| Foreground service (special use), exact alarms, boot completed, wake lock | keeping home-screen widgets up to date on the cadence you choose, without a notification |
+| Foreground service (special use), exact alarms, boot completed, wake lock | keeping home-screen widgets up to date on the cadence you choose; Android requires a foreground-service notification |
 | Request ignore battery optimisations | optional; only when you tap *Battery optimisation* in Settings |
 
-The app never asks for notification permission and sends no notifications.
+The app does not request Android's `POST_NOTIFICATIONS` permission. Widget updates use a foreground service, for which Android requires an ongoing notification. On Android 13 and later, when that permission is not granted, Android omits the foreground-service notice from the notification drawer but still lists the running service in Task Manager. Android 12 and earlier use different rules and may show the notice in the notification shade, so the app cannot promise complete invisibility. See [Android's notification-permission documentation](https://developer.android.com/develop/ui/compose/notifications/notification-permission).
 
 ## Contact
 

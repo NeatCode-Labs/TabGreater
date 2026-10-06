@@ -122,7 +122,8 @@ internal fun TileHeader(
             horizontalArrangement = Arrangement.spacedBy(GLYPH_GAP_DP.dp),
         ) {
             Text(
-                text = tile.exchangeLabel,
+                text = listOfNotNull(tile.exchangeLabel, tile.statusLabel).joinToString(" · "),
+                modifier = Modifier.weight(1f, fill = false),
                 style = TGType.exchange,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

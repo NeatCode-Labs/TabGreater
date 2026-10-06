@@ -38,7 +38,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -54,6 +56,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
@@ -75,9 +78,13 @@ import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.TGDimens
 import com.neatcode.tabgreater.core.model.Timeframe
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.feature.chart.ChartBridge
+import com.neatcode.tabgreater.feature.chart.ChartAvailability
 import com.neatcode.tabgreater.feature.chart.ChartPeriods
+import com.neatcode.tabgreater.feature.chart.ChartTarget
 import com.neatcode.tabgreater.feature.chart.ChartView
+import com.neatcode.tabgreater.feature.chart.ChartWebViewCache
 import com.neatcode.tabgreater.feature.chart.DrawingAction
 import com.neatcode.tabgreater.ui.components.ExchangeGlyph
 import com.neatcode.tabgreater.ui.components.TGIconButton
@@ -141,6 +148,15 @@ fun ChartScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val drawingState by viewModel.drawingState.collectAsStateWithLifecycle()
     val drawingCommand by viewModel.drawingCommand.collectAsStateWithLifecycle()
+    val availability by bridge.availability.collectAsStateWithLifecycle()
+    val chartTarget = state.market?.let { ChartTarget(it.key, state.settings.timeframe) }
+    val chartAvailability = when (val current = availability) {
+        is ChartAvailability.Ready -> if (current.target == chartTarget) current else ChartAvailability.Loading(chartTarget)
+        is ChartAvailability.Unsupported -> if (current.target == chartTarget) current else ChartAvailability.Loading(chartTarget)
+        is ChartAvailability.Unavailable -> if (current.target == chartTarget) current else ChartAvailability.Loading(chartTarget)
+        is ChartAvailability.Loading -> if (current.target == chartTarget) current else ChartAvailability.Loading(chartTarget)
+    }
+    val chartReady = chartAvailability is ChartAvailability.Ready && chartTarget != null
     val context = LocalContext.current
 
     var fullscreen by rememberSaveable { mutableStateOf(false) }
@@ -171,7 +187,7 @@ fun ChartScreen(
     val statusBarPx = WindowInsets.statusBars.getTop(density)
 
     fun shareChart() {
-        if (sharing) return
+        if (sharing || !chartReady) return
         val bounds = captureBounds[0]
         val host = activity
         if (bounds == null || host == null || state.market == null) {
@@ -216,7 +232,7 @@ fun ChartScreen(
     BackHandler(enabled = fullscreen) { fullscreen = false }
     // Composed after the fullscreen handler so it wins: Back first drops the tool being placed or
     // the selection, and only then leaves fullscreen or the screen.
-    BackHandler(enabled = drawingState.drawing || drawingState.selectedId != null) {
+    BackHandler(enabled = chartReady && (drawingState.drawing || drawingState.selectedId != null)) {
         viewModel.issue(if (drawingState.drawing) DrawingAction.Cancel else DrawingAction.Deselect)
     }
 
@@ -281,13 +297,25 @@ fun ChartScreen(
                             logScale = state.settings.logScale,
                             autoScaleTick = autoScaleTick,
                             bridge = bridge,
-                            modifier = Modifier.fillMaxSize(),
+                            // A reused WebView can still contain the outgoing target between
+                            // composition and setMarket. Reveal only after JS adopts this data.
+                            modifier = Modifier.fillMaxSize().alpha(if (chartReady) 1f else 0f),
                             magnetMode = state.settings.magnetMode,
                             drawingsVisible = state.settings.drawingsVisible,
                             drawingCommand = drawingCommand,
                             onDrawingCommandHandled = viewModel::onDrawingCommandHandled,
                             debuggable = debuggable,
                         )
+                        if (!chartReady) {
+                            ChartAvailabilityPanel(
+                                state = chartAvailability,
+                                onRetry = {
+                                    com.neatcode.tabgreater.core.exchange.ExchangeRequests.retry(market.key.exchange)
+                                    ChartWebViewCache.manualRetry(bridge)
+                                },
+                                modifier = Modifier.align(Alignment.Center),
+                            )
+                        }
                     } else if (state.unavailable) {
                         Text(
                             text = stringResource(R.string.chart_unavailable, state.pair),
@@ -306,6 +334,7 @@ fun ChartScreen(
                             onDelete = { viewModel.issue(DrawingAction.RemoveSelected) },
                             canvasHeight = canvasHeight,
                             bottomReserve = if (fullscreen) FullscreenToolbarHeight + PillsReserve else PillsReserve,
+                            enabled = chartReady,
                             modifier = Modifier.align(Alignment.TopStart),
                         )
                     }
@@ -314,6 +343,7 @@ fun ChartScreen(
                         logScale = state.settings.logScale,
                         onToggleLog = { viewModel.setLogScale(!state.settings.logScale) },
                         onAuto = { autoScaleTick++ },
+                        enabled = chartReady,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(end = 8.dp, bottom = if (fullscreen) FullscreenToolbarHeight + 6.dp else 6.dp),
@@ -322,6 +352,7 @@ fun ChartScreen(
                     if (fullscreen) {
                         ChartToolbar(
                             timeframe = state.settings.timeframe,
+                            chartReady = chartReady,
                             fullscreen = true,
                             height = FullscreenToolbarHeight,
                             chipScroll = chipScroll,
@@ -357,6 +388,7 @@ fun ChartScreen(
             if (!fullscreen) {
                 ChartToolbar(
                     timeframe = state.settings.timeframe,
+                    chartReady = chartReady,
                     fullscreen = false,
                     height = ToolbarHeight,
                     chipScroll = chipScroll,
@@ -386,11 +418,12 @@ fun ChartScreen(
         onMagnetMode = viewModel::setMagnetMode,
         onDrawingsVisible = viewModel::setDrawingsVisible,
         onDeleteAllDrawings = { confirmDeleteDrawings = true },
+        enabled = chartReady,
         immersive = fullscreen,
     )
 
     val textId = drawingState.needsTextId
-    if (textId != null && textId != answeredTextId) {
+    if (chartReady && textId != null && textId != answeredTextId) {
         DrawingTextDialog(
             tool = drawingState.needsTextTool,
             onConfirm = { text ->
@@ -408,6 +441,7 @@ fun ChartScreen(
     if (confirmDeleteDrawings) {
         DeleteAllDrawingsDialog(
             market = "${state.key.exchange.displayName} ${state.pair}",
+            enabled = chartReady,
             onConfirm = {
                 confirmDeleteDrawings = false
                 viewModel.issue(DrawingAction.ClearAll)
@@ -415,6 +449,44 @@ fun ChartScreen(
             onDismiss = { confirmDeleteDrawings = false },
             immersive = fullscreen,
         )
+    }
+}
+
+@Composable
+private fun ChartAvailabilityPanel(
+    state: ChartAvailability,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val messageRes = when (state) {
+        is ChartAvailability.Loading -> R.string.chart_loading
+        is ChartAvailability.Ready -> return
+        is ChartAvailability.Unsupported -> R.string.chart_renderer_unsupported
+        is ChartAvailability.Unavailable -> when (state.failureKind) {
+            ExchangeFailureKind.RATE_LIMITED, ExchangeFailureKind.DEFERRED -> R.string.chart_data_rate_limited
+            ExchangeFailureKind.INVALID_MARKET -> R.string.chart_data_market_unavailable
+            null -> R.string.chart_renderer_unavailable
+            else -> R.string.chart_data_unavailable
+        }
+    }
+    Surface(
+        modifier = modifier.padding(16.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = TG.NavSurface,
+        contentColor = TG.TextPrimary,
+        shadowElevation = 8.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(text = stringResource(messageRes), style = TGType.body)
+            if (state is ChartAvailability.Unavailable) {
+                TextButton(onClick = onRetry) {
+                    Text(text = stringResource(R.string.chart_retry), color = TG.Accent)
+                }
+            }
+        }
     }
 }
 
@@ -632,30 +704,31 @@ private fun ScalePills(
     logScale: Boolean,
     onToggleLog: () -> Unit,
     onAuto: () -> Unit,
+    enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ScalePill(stringResource(R.string.chart_scale_log), active = logScale, onClick = onToggleLog)
-        ScalePill(stringResource(R.string.chart_scale_auto), active = false, onClick = onAuto)
+        ScalePill(stringResource(R.string.chart_scale_log), active = logScale, enabled = enabled, onClick = onToggleLog)
+        ScalePill(stringResource(R.string.chart_scale_auto), active = false, enabled = enabled, onClick = onAuto)
     }
 }
 
 @Composable
-private fun ScalePill(label: String, active: Boolean, onClick: () -> Unit) {
+private fun ScalePill(label: String, active: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .height(TGDimens.CHIP_H_DP.dp)
             .clip(PillShape)
             .background(TG.ChipFill)
             .border(1.dp, TG.Outline, PillShape)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             style = TGType.toolbarChip,
-            color = if (active) TG.TextPrimary else TG.TextSecondary,
+            color = when { !enabled -> TG.TextTertiary; active -> TG.TextPrimary; else -> TG.TextSecondary },
             maxLines = 1,
         )
     }
@@ -665,6 +738,7 @@ private fun ScalePill(label: String, active: Boolean, onClick: () -> Unit) {
 @Composable
 private fun ChartToolbar(
     timeframe: Timeframe,
+    chartReady: Boolean,
     fullscreen: Boolean,
     height: Dp,
     chipScroll: ScrollState,
@@ -697,6 +771,7 @@ private fun ChartToolbar(
                 TimeframeChip(
                     label = entry.label,
                     active = entry == timeframe,
+                    enabled = chartReady,
                     onClick = { onTimeframe(entry) },
                 )
             }
@@ -706,16 +781,17 @@ private fun ChartToolbar(
             thickness = 1.dp,
             color = TG.Outline,
         )
-        ToolbarAction(Icons.Outlined.Share, stringResource(R.string.cd_chart_share), onShare)
+        ToolbarAction(Icons.Outlined.Share, stringResource(R.string.cd_chart_share), onShare, enabled = chartReady)
         // A dot on the pencil while "Show drawings" is off, so hidden drawings are not forgotten.
         ToolbarAction(
             imageVector = TGIcons.Draw,
             contentDescription = stringResource(if (drawingsHidden) R.string.cd_chart_draw_hidden else R.string.cd_chart_draw),
             onClick = onDraw,
             badge = drawingsHidden,
+            enabled = chartReady,
         )
-        ToolbarAction(TGIcons.CandleType, stringResource(R.string.cd_chart_type), onCandleType)
-        ToolbarAction(TGIcons.Indicators, stringResource(R.string.cd_chart_indicators), onIndicators)
+        ToolbarAction(TGIcons.CandleType, stringResource(R.string.cd_chart_type), onCandleType, enabled = chartReady)
+        ToolbarAction(TGIcons.Indicators, stringResource(R.string.cd_chart_indicators), onIndicators, enabled = chartReady)
         ToolbarAction(
             imageVector = if (fullscreen) TGIcons.FullscreenExit else TGIcons.Fullscreen,
             contentDescription = stringResource(
@@ -729,12 +805,12 @@ private fun ChartToolbar(
 
 /** A timeframe chip: accent label plus the 3 dp accent underline the watchlist tab row uses. */
 @Composable
-private fun TimeframeChip(label: String, active: Boolean, onClick: () -> Unit) {
+private fun TimeframeChip(label: String, active: Boolean, enabled: Boolean, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxHeight()
             .width(IntrinsicSize.Max)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -742,7 +818,7 @@ private fun TimeframeChip(label: String, active: Boolean, onClick: () -> Unit) {
         Text(
             text = label,
             style = TGType.toolbarChip,
-            color = if (active) TG.Accent else TG.TextSecondary,
+            color = when { !enabled -> TG.TextTertiary; active -> TG.Accent; else -> TG.TextSecondary },
             maxLines = 1,
         )
         Spacer(Modifier.weight(1f))
@@ -762,16 +838,21 @@ private fun ToolbarAction(
     contentDescription: String,
     onClick: () -> Unit,
     badge: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Spacer(Modifier.width(16.dp))
     Box {
-        TGIconButton(
-            imageVector = imageVector,
-            contentDescription = contentDescription,
-            onClick = onClick,
-            tint = TG.TextSecondary,
-            size = 20.dp,
-        )
+        Box(
+            Modifier.size(20.dp).clip(PillShape).clickable(enabled = enabled, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = imageVector,
+                contentDescription = contentDescription,
+                tint = if (enabled) TG.TextSecondary else TG.TextTertiary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         if (badge) {
             Box(
                 Modifier

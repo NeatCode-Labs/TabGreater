@@ -36,6 +36,12 @@ Two product flavours share the same code and package name and differ only in wha
 
 The chart library (KLineChart 10.0.3, Apache-2.0) is vendored at `app/src/main/assets/chart/vendor/klinecharts.js` — the **unminified** UMD build, copied byte-for-byte from the upstream npm release, with its LICENSE and NOTICE. No npm is involved in the build. `:app:verifyVendoredAssets` runs before every build and fails it if that file is not the exact upstream release recorded in `VENDORED-KLINECHART.md`.
 
+### Chart host regression checks
+
+`node tools/chart-regression.cjs` runs the actual vendored engine and production chart host in a headless browser, with a simulated native bridge and all browser network requests blocked. It covers offline market/period changes, identical-target refresh, late replies, abandoned retries, live updates and drawing restoration. It requires Node.js and Playwright available through normal module resolution (or `NODE_PATH`); `CHART_TEST_CHANNEL=msedge` selects an installed Edge instead of Playwright's Chromium. These are development-only prerequisites, not Android build dependencies.
+
+Also check the signed APK on an emulator: load one market online, enable airplane mode, open another market in the same process, return to the first market, then restore connectivity and retry. Separately load a chart online and change its interval after disabling connectivity (interval controls are disabled once the chart becomes unavailable). Neither the outgoing candles nor their price axis should appear under the new target's header while loading or unavailable. Repeat using Back/watchlist navigation and a chart deep link. A cold offline restart separately verifies the watchlist's `Cached` label; a warm resume within ten minutes does not by itself turn a recently confirmed price into `Cached`.
+
 ## Release
 
 `./gradlew assembleFossRelease` produces the R8-minified APK for GitHub Releases and F-Droid; `./gradlew bundlePlayRelease` the AAB for Google Play. Both are signed with the key named in `keystore.properties` (git-ignored). F-Droid metadata (descriptions, changelogs, icon, screenshots) lives in `metadata/en-US/`. Releases on GitHub are signed with the NeatCode Labs key; its SHA-256 certificate fingerprint is published in the release notes so you can verify an APK with `apksigner verify --print-certs`.

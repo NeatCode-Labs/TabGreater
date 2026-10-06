@@ -136,6 +136,8 @@ interface MarketRepository {
  * @property volume sum of base volume over the window.
  * @property updatedAt epoch millis of the last refresh; `0` when only cached data is available.
  */
+enum class HistoryState { CACHED, VERIFIED, INCOMPLETE, UNAVAILABLE }
+
 data class Sparkline(
     val points: FloatArray,
     val firstClose: Double?,
@@ -144,13 +146,16 @@ data class Sparkline(
     val low: Double?,
     val volume: Double?,
     val updatedAt: Long,
+    val history: HistoryState = HistoryState.VERIFIED,
+    val lastOpenTime: Long? = null,
+    val forming: Boolean = true,
 ) {
     val isEmpty: Boolean get() = points.size < 2
 
     override fun equals(other: Any?): Boolean =
         other is Sparkline && points.contentEquals(other.points) && firstClose == other.firstClose &&
             lastClose == other.lastClose && high == other.high && low == other.low &&
-            volume == other.volume && updatedAt == other.updatedAt
+            volume == other.volume && updatedAt == other.updatedAt && history == other.history && lastOpenTime == other.lastOpenTime && forming == other.forming
 
     override fun hashCode(): Int = points.contentHashCode() * 31 + updatedAt.hashCode()
 

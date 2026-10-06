@@ -33,6 +33,10 @@ internal data class TileNumbers(
  */
 internal fun tileNumbers(period: SparkPeriod, ticker: Ticker?, spark: Sparkline?): TileNumbers {
     val price = ticker?.last ?: spark?.lastClose
+    val verified = spark?.takeIf { it.history == com.neatcode.tabgreater.core.data.repo.HistoryState.VERIFIED }
+    if (spark != null && verified == null) {
+        return tileNumbers(period, ticker, null).copy(price = price)
+    }
     val changePct = changePct(period, ticker, spark)
     val daily = period == SparkPeriod.HOURS_24
     return TileNumbers(
@@ -115,7 +119,7 @@ private fun windowChange(spark: Sparkline?): Double? {
  * and are left alone.
  */
 internal fun Sparkline.withLast(price: Double?): Sparkline {
-    if (price == null || isEmpty || lastClose == price) return this
+    if (price == null || !forming || isEmpty || lastClose == price) return this
     val moved = points.copyOf()
     moved[moved.lastIndex] = price.toFloat()
     return copy(
@@ -147,6 +151,7 @@ internal fun redrawsTile(shown: Ticker, next: Ticker): Boolean =
  * it rewrites the very same candles.
  */
 internal fun redrawsTile(shown: Sparkline, next: Sparkline): Boolean =
+    shown.forming != next.forming ||
     !shown.points.contentEquals(next.points) ||
         shown.firstClose != next.firstClose ||
         shown.lastClose != next.lastClose ||

@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.core.data.repo
 
 import com.neatcode.tabgreater.core.data.db.MarketDao
 import com.neatcode.tabgreater.core.data.db.MarketEntity
+import com.neatcode.tabgreater.core.exchange.SingleFlight
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
@@ -29,7 +30,12 @@ class RoomMarketRepository(
     private val catalogueValidSince: () -> Long = { 0L },
 ) : MarketRepository {
 
-    override suspend fun refreshMarkets(exchange: ExchangeId, force: Boolean): Result<Unit> {
+    private val refreshes = SingleFlight<ExchangeId, Result<Unit>>()
+
+    override suspend fun refreshMarkets(exchange: ExchangeId, force: Boolean): Result<Unit> =
+        refreshes.run(exchange) { refreshMarketList(exchange, force) }
+
+    private suspend fun refreshMarketList(exchange: ExchangeId, force: Boolean): Result<Unit> {
         val adapter = registry.getOrNull(exchange) ?: return Result.success(Unit)
         return try {
             val startedAt = now()

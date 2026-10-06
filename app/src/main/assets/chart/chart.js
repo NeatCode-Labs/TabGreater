@@ -26,7 +26,10 @@
 
   var chart = null;
   var generation = 0;                       // bumped on every symbol/period swap
+  var nativeHostGeneration = 0;
+  var nativeTargetGeneration = 0;
   var loaderMuted = false;                  // true during a batched symbol+period swap
+  var clearSeriesOnSwap = false;            // old bars cannot belong to a different target
   var sub = null;                           // { gen: n, callback: fn }
   var candleType = 'candle_solid';
 
@@ -47,10 +50,18 @@
         resolve: resolve, reject: reject,
         timer: setTimeout(function () {
           delete pending[id];
-          reject(new Error('timeout:' + action));
+          var err = new Error('timeout:' + action);
+          err.failureKind = 'TRANSIENT';
+          err.retryable = true;
+          err.retryAfterMs = 0;
+          reject(err);
         }, RPC_TIMEOUT)
       };
-      global.Native.postMessage(JSON.stringify({ id: id, action: action, payload: payload || {} }));
+      global.Native.postMessage(JSON.stringify({
+        id: id, action: action, payload: payload || {},
+        hostGeneration: nativeHostGeneration,
+        targetGeneration: nativeTargetGeneration
+      }));
     });
   }
 
@@ -59,7 +70,13 @@
     if (!m || !m.id) { return; }
     var p = pending[m.id]; if (!p) { return; }
     clearTimeout(p.timer); delete pending[m.id];
-    if (m.error) { p.reject(new Error(m.error)); } else { p.resolve(m.result); }
+    if (m.error) {
+      var err = new Error(m.error);
+      err.failureKind = m.failureKind || 'TRANSIENT';
+      err.retryable = !!m.retryable;
+      err.retryAfterMs = Math.max(0, Number(m.retryAfterMs) || 0);
+      p.reject(err);
+    } else { p.resolve(m.result); }
   }
 
   if (hasBridge()) { global.Native.onmessage = function (e) { onNativeMessage(e.data); }; }
@@ -295,21 +312,36 @@
         forward:  !!(res && res.hasMoreOlder),   // more history available to the left
         backward: false                          // we never page forward past "now"
       });
+      if (params.type === 'init') {
+        notice('dataState', { ready: true });
+      }
       // Restore saved drawings only onto real bars: on an empty chart a moved point would lose its
       // timestamp, and the next drawingsChanged would overwrite the saved set with that.
       if (params.type === 'init' && res && res.bars && res.bars.length > 0) { barsDelivered(gen); }
     })['catch'](function (err) {
       if (gen !== generation) { return; }
       note('warn', 'getBars ' + params.type + ' try ' + (attempt + 1) + ': ' + err.message);
-      if (params.type === 'init' && attempt < INIT_RETRY_DELAYS.length) {
+      if (params.type === 'init') {
+        // Surface a rate limit/network failure immediately, even when its retryAfterMs is long.
+        // The scheduled retry below remains active; a later success sends dataState ready.
+        notice('dataState', {
+          ready: false,
+          error: String(err.message || 'Chart data is unavailable.'),
+          failureKind: err.failureKind || 'TRANSIENT',
+          retryable: !!err.retryable,
+          retryAfterMs: err.retryAfterMs || 0
+        });
+      }
+      if (params.type === 'init' && err.retryable && attempt < INIT_RETRY_DELAYS.length) {
+        var wait = Math.max(INIT_RETRY_DELAYS[attempt], err.retryAfterMs || 0);
         setTimeout(function () {
           if (gen !== generation) { return; }    // a newer swap owns the store now
           requestBars(params, gen, attempt + 1);
-        }, INIT_RETRY_DELAYS[attempt]);
+        }, wait);
         return;                                  // still loading: the callback comes with the retry
       }
       if (params.type === 'init') {
-        note('error', 'getBars init gave up after ' + (INIT_RETRY_DELAYS.length + 1) + ' tries');
+        note('error', 'getBars init gave up after ' + (attempt + 1) + ' tries');
         params.callback([], false);
       } else {
         params.callback([], { forward: true, backward: false });
@@ -320,11 +352,18 @@
   var dataLoader = {
     // params: { type:'init'|'forward'|'backward', timestamp:number|null, symbol, period, callback }
     getBars: function (params) {
-      if (loaderMuted) { return; }                 // swallowed half of a batched swap
+      if (loaderMuted) {
+        // resetData/setPeriod do NOT clear KLineChart's series until an init callback.
+        // Clear synchronously before publishing a different symbol/period, even if the real
+        // request fails or waits through a long retry. Keep same-target bars during refresh.
+        if (clearSeriesOnSwap && params.type === 'init') { params.callback([], false); }
+        return;
+      }
       requestBars(params, generation, 0);
     },
 
     subscribeBar: function (params) {
+      if (loaderMuted) { return; }                 // clearing is not a successful data load
       sub = { gen: generation, callback: params.callback };
       rpc('subscribeBar', {
         exchange: params.symbol.exchange,
@@ -501,7 +540,13 @@
   };
 
   function notice(action, payload) {
-    if (hasBridge()) { global.Native.postMessage(JSON.stringify({ action: action, payload: payload })); }
+    if (hasBridge()) {
+      global.Native.postMessage(JSON.stringify({
+        action: action, payload: payload,
+        hostGeneration: nativeHostGeneration,
+        targetGeneration: nativeTargetGeneration
+      }));
+    }
   }
 
   function later(fn) { setTimeout(function () { if (chart !== null) { fn(); } }, 0); }
@@ -1237,20 +1282,31 @@
      * label = Timeframe.label ('1m' … '1M'). KLineChart's own `{period}` placeholder renders
      *         {span:1,type:'minute'} as a bare "1" (F4-4), so the title template gets our label.
      */
-    setMarket: function (sym, p, label) {
-      if (chart === null) { return; }
+    setMarket: function (sym, p, label, hostGeneration, targetGeneration) {
+      if (chart === null) { return false; }
       drawingsBeforeSwap(sym);                            // before the swap: saves, then removes ours
+      nativeHostGeneration = Number(hostGeneration) || 0;
+      nativeTargetGeneration = Number(targetGeneration) || 0;
       generation++;
+      var oldSymbol = chart.getSymbol(), oldPeriod = chart.getPeriod();
+      clearSeriesOnSwap = !oldSymbol || !oldPeriod ||
+        oldSymbol.exchange !== sym.exchange || oldSymbol.ticker !== sym.ticker ||
+        oldSymbol.instId !== sym.instId || oldPeriod.span !== p.span || oldPeriod.type !== p.unit;
       chart.setStyles({ candle: { tooltip: { title: {
         template: label ? '{ticker} · ' + label : '{ticker} · {period}'
       } } } });
       loaderMuted = true;
-      chart.setPeriod({ span: p.span, type: p.unit });    // fires a getBars we swallow
-      loaderMuted = false;
+      try {
+        chart.setPeriod({ span: p.span, type: p.unit });  // clears only when the target differs
+      } finally {
+        loaderMuted = false;
+        clearSeriesOnSwap = false;
+      }
       chart.setSymbol({                                    // fires the real getBars
         exchange: sym.exchange, ticker: sym.ticker, instId: sym.instId,
         pricePrecision: sym.pricePrecision, volumePrecision: sym.volumePrecision
       });
+      return true;
     },
 
     setIndicators: function (spec) {

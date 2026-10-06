@@ -16,6 +16,7 @@ import com.neatcode.tabgreater.core.model.Ticker
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -63,6 +64,8 @@ class ChartBridgeTest {
             markets = FakeMarkets(BTC_EUR),
             drawings = drawings,
         )
+        val host = bridge.attachHost()
+        bridge.onMarketChanged(ChartTarget(BTC_EUR.key, Timeframe.H1), host)
     }
 
     @After
@@ -110,6 +113,85 @@ class ChartBridgeTest {
         assertNull(withTimeoutOrNull(SHORT_MS) { bridge.awaitReady() })
         bridge.handle(READY_MESSAGE, NoReply)
         withTimeout(TIMEOUT_MS) { bridge.awaitReady() }
+    }
+
+    @Test
+    fun `successful REST response stays loading until the renderer confirms adoption`() = runBlocking {
+        val target = ChartTarget(BTC_EUR.key, Timeframe.H1)
+        val existingJobs = scope.coroutineContext[Job]!!.children.toSet()
+        bridge.handle(
+            """{"id":"bars1","action":"getBars","payload":{"exchange":"binance","ticker":"BTC/EUR","span":1,"unit":"hour","type":"init","limit":500}}""",
+            NoReply,
+        )
+        withTimeout(TIMEOUT_MS) {
+            adapter.historyRequests.receive()
+            scope.coroutineContext[Job]!!.children.filter { it !in existingJobs }.forEach { it.join() }
+        }
+        assertEquals(ChartAvailability.Loading(target), bridge.availability.value)
+
+        bridge.handle("""{"action":"dataState","payload":{"ready":true}}""", NoReply)
+        assertEquals(ChartAvailability.Ready(target), bridge.availability.value)
+    }
+
+    @Test
+    fun `data readiness from a replaced host and market generation is ignored`() {
+        val page = bridge.onPageStarted()
+        val oldHost = bridge.attachHost()
+        val oldTarget = ChartTarget(BTC_EUR.key, Timeframe.H1)
+        val oldTargetGeneration = bridge.onMarketChanged(oldTarget, oldHost)
+
+        val activeHost = bridge.attachHost()
+        val activeTarget = ChartTarget(BTC_EUR.key, Timeframe.H4)
+        val activeTargetGeneration = bridge.onMarketChanged(activeTarget, activeHost)
+        assertEquals(ChartAvailability.Loading(activeTarget), bridge.availability.value)
+
+        bridge.handle(
+            """{"action":"dataState","payload":{"ready":true},"hostGeneration":$oldHost,"targetGeneration":$oldTargetGeneration}""",
+            NoReply,
+            page,
+        )
+        assertEquals("a superseded market cannot claim the active chart is ready", ChartAvailability.Loading(activeTarget), bridge.availability.value)
+
+        bridge.handle(
+            """{"action":"dataState","payload":{"ready":true},"hostGeneration":$activeHost,"targetGeneration":$activeTargetGeneration}""",
+            NoReply,
+            page,
+        )
+        assertEquals(ChartAvailability.Ready(activeTarget), bridge.availability.value)
+    }
+
+    @Test
+    fun `startup failure guard rejects an obsolete host target or page`() {
+        val oldHost = bridge.attachHost()
+        val oldTarget = bridge.onMarketChanged(ChartTarget(BTC_EUR.key, Timeframe.H1), oldHost)
+        val page = bridge.activePageToken
+        assertTrue(bridge.isCurrentChart(oldHost, oldTarget, page))
+
+        val activeHost = bridge.attachHost()
+        assertFalse(bridge.isCurrentChart(oldHost, oldTarget, page))
+        val activeTarget = bridge.onMarketChanged(ChartTarget(BTC_EUR.key, Timeframe.H4), activeHost)
+        assertFalse(bridge.isCurrentChart(activeHost, oldTarget, page))
+        assertTrue(bridge.isCurrentChart(activeHost, activeTarget, page))
+
+        bridge.onPageStarted()
+        assertFalse(bridge.isCurrentChart(activeHost, activeTarget, page))
+    }
+
+    @Test
+    fun `outgoing drawings flush from the previous host is accepted during market handoff`() = runBlocking {
+        bridge.onPageStarted()
+        val oldHost = bridge.attachHost()
+        val oldTarget = ChartTarget(BTC_EUR.key, Timeframe.H1)
+        val oldGeneration = bridge.onMarketChanged(oldTarget, oldHost)
+        val newHost = bridge.attachHost()
+        bridge.onMarketChanged(ChartTarget(BTC_EUR.key, Timeframe.H4), newHost)
+
+        val raw = """{"action":"drawingsChanged","hostGeneration":$oldHost,"targetGeneration":$oldGeneration,"payload":{"exchange":"binance","ticker":"BTC/EUR","drawings":[$SEGMENT]}}"""
+        bridge.handle(raw, NoReply)
+
+        val (savedKey, savedJson) = withTimeout(TIMEOUT_MS) { drawings.saved.receive() }
+        assertEquals(BTC_EUR.key, savedKey)
+        assertEquals(listOf("segment"), DrawingsCodec.decode(savedJson).map { it.name })
     }
 
     // ---------------------------------------------------------------- live stream
@@ -284,6 +366,7 @@ class ChartBridgeTest {
     private class FakeAdapter : ExchangeAdapter {
         val subscriptions = Channel<Pair<Timeframe, MarketKey>>(Channel.UNLIMITED)
         val cancellations = Channel<Boolean>(Channel.UNLIMITED)
+        val historyRequests = Channel<Unit>(Channel.UNLIMITED)
 
         @Volatile
         var subscribeCount = 0
@@ -298,7 +381,10 @@ class ChartBridgeTest {
             timeframe: Timeframe,
             endTime: Long?,
             limit: Int,
-        ): List<Candle> = emptyList()
+        ): List<Candle> {
+            historyRequests.send(Unit)
+            return emptyList()
+        }
 
         override fun watchTickers(markets: List<Market>): Flow<Ticker> = emptyFlow()
 

@@ -382,9 +382,9 @@ class LiveTickerService : Service() {
     }
 
     private suspend fun restRound(keys: Set<MarketKey>) {
-        runCatchingSuspend(WHAT_REST_ROUND) { marketData.refresh(keys) }
-            ?: return
-        diagnostics.onRestRound(System.currentTimeMillis())
+        val result = runCatchingSuspend(WHAT_REST_ROUND) { marketData.refreshResult(keys) } ?: return
+        if (result.complete) diagnostics.onRestRound(System.currentTimeMillis())
+        else diagnostics.onError(WHAT_REST_ROUND, result.failures.values.firstOrNull() ?: IllegalStateException("Some markets returned no price"))
     }
 
     /**

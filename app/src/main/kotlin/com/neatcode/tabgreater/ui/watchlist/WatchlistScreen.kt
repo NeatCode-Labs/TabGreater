@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -97,6 +99,13 @@ fun WatchlistScreen(
             onTileSizeClick = { openSheet = WatchlistSheet.SIZE },
             onSortClick = { openSheet = WatchlistSheet.SORT },
         )
+
+        state.refreshMessage?.let { message ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(message, style = TGType.chip, modifier = Modifier.weight(1f))
+                TextButton(onClick = viewModel::refresh) { Text("Retry") }
+            }
+        }
 
         Box(
             Modifier

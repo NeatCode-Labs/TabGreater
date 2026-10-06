@@ -20,6 +20,9 @@ interface ExchangeAdapter {
     /** One-shot 24 h ticker snapshot for the given markets. */
     suspend fun fetchTickers(markets: List<Market>): List<Ticker>
 
+    /** Detailed refresh outcome, including omissions and per-market failures. */
+    suspend fun fetchTickerBatch(markets: List<Market>): TickerBatch = tickerBatch(markets) { fetchTickers(markets) }
+
     /**
      * Historical bars, oldest first. [endTime] is an exclusive upper bound in epoch millis
      * (`null` = now). Implementations clamp [limit] to the exchange maximum.
@@ -43,4 +46,10 @@ interface ExchangeAdapter {
 class ExchangeUnavailableException(val exchange: ExchangeId, message: String) : Exception(message)
 
 /** Thrown for non-2xx responses that are not regional blocks. */
-class ExchangeHttpException(val exchange: ExchangeId, val code: Int, message: String) : Exception(message)
+class ExchangeHttpException(
+    val exchange: ExchangeId,
+    val code: Int,
+    message: String,
+    val kind: ExchangeFailureKind = httpFailureKind(code),
+    var retryAfterMs: Long? = null,
+) : Exception(message)

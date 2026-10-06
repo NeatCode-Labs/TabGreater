@@ -1,5 +1,10 @@
 package com.neatcode.tabgreater.core.exchange.kraken
 
+import com.neatcode.tabgreater.core.exchange.TickerBatch
+import com.neatcode.tabgreater.core.exchange.tickerBatches
+import com.neatcode.tabgreater.core.exchange.tickerBatch
+import com.neatcode.tabgreater.core.exchange.ExchangeRequests
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
@@ -147,6 +152,9 @@ class KrakenAdapter(
      * then the stock tokens with their `asset_class`. A failing stock call is only logged — stock
      * tokens must never cost the crypto tiles their prices.
      */
+    override suspend fun fetchTickerBatch(markets: List<Market>): TickerBatch =
+        tickerBatches(markets.groupBy { it.assetClass }.values.flatMap { it.chunked(TICKER_CHUNK) }, ::fetchTickerChunk)
+
     override suspend fun fetchTickers(markets: List<Market>): List<Ticker> = withContext(Dispatchers.IO) {
         if (markets.isEmpty()) return@withContext emptyList()
         val (stocks, currency) = markets.partition { it.assetClass == AssetClass.STOCK }
@@ -395,9 +403,15 @@ class KrakenAdapter(
     private fun krakenError(code: Int, detail: String): Exception {
         val text = detail.take(ERROR_BODY_CHARS)
         return if (text.contains(RATE_LIMIT_MARKER, ignoreCase = true)) {
-            ExchangeHttpException(id, code, "Kraken rate limit hit ($text)")
+            ExchangeRequests.recordRateLimit(client, id)
+            ExchangeHttpException(id, code, "Kraken rate limit hit ($text)", ExchangeFailureKind.RATE_LIMITED, 900_000)
         } else {
-            ExchangeHttpException(id, code, "Kraken error: $text")
+            val kind = when {
+                text.contains("EService:Unavailable") || text.contains("EGeneral:Internal error") -> ExchangeFailureKind.TRANSIENT
+                REFUSALS.any { text.contains(it) } -> ExchangeFailureKind.INVALID_MARKET
+                else -> ExchangeFailureKind.INVALID_RESPONSE
+            }
+            ExchangeHttpException(id, code, "Kraken error: $text", kind)
         }
     }
 
@@ -408,11 +422,7 @@ class KrakenAdapter(
             val url = (restBase.trimEnd('/') + path).toHttpUrl().newBuilder()
             for ((name, value) in query) url.addQueryParameter(name, value)
             val request = Request.Builder().url(url.build()).get().build()
-            client.newCall(request).execute().use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) throw errorFor(response, body)
-                response.code to body
-            }
+            ExchangeRequests.execute(id, client, request, ::errorFor).let { it.code to it.body }
         }
 
     private fun errorFor(response: Response, body: String): Exception {

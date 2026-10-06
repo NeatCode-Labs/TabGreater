@@ -1,0 +1,5 @@
+• Fix offline chart switches showing another pair's candles.
+• Make saved prices and stale data easier to identify.
+• Improve recovery after connection failures and rate limits.
+• Share market requests to reduce duplicate work.
+• Improve widget refresh reliability and small tiles with larger text.

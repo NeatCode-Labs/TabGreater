@@ -52,17 +52,20 @@ class RoomSparklineRepositoryTest {
         }
         runCurrent()
 
-        assertEquals(1, emissions.size)
-        assertEquals(4, emissions.single().points.size)
-        // The cache is younger than two bars, so a cold start does not fire an OHLCV request.
-        assertEquals(0, adapter.ohlcvCalls)
+        assertEquals(4, emissions.first().points.size)
+        assertEquals(HistoryState.CACHED, emissions.first().history)
+        // A fresh-looking disk timestamp is not proof that this process has verified the window.
+        assertEquals(1, adapter.ohlcvCalls)
+        assertEquals(HistoryState.VERIFIED, emissions.last().history)
+        assertEquals(9.0, emissions.last().lastClose!!, 0.0)
     }
 
     @Test
     fun `an unknown market keeps the cache, retries and recovers`() = runTest {
+        val now = System.currentTimeMillis()
         val adapter = RecordingAdapter(
             ExchangeId.BINANCE,
-            ohlcv = listOf(candle(1L, 1.0), candle(2L, 2.0), candle(3L, 3.0)),
+            ohlcv = listOf(candle(now - 2 * PERIOD.timeframe.millis, 1.0), candle(now - PERIOD.timeframe.millis, 2.0), candle(now, 3.0)),
         )
         val repository = repository(adapter)
 

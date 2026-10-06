@@ -23,6 +23,8 @@ data class Ticker(
     val bid: Double? = null,
     val ask: Double? = null,
     val timestamp: Long,
+    /** Quote-only stream frames carry an older last price; they must not renew its freshness. */
+    @kotlinx.serialization.Transient val confirmsPrice: Boolean = true,
 )
 
 /** One OHLCV bar. [openTime] is epoch millis (UTC) of the bar start. */

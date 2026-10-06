@@ -1,5 +1,10 @@
 package com.neatcode.tabgreater.core.exchange.gate
 
+import com.neatcode.tabgreater.core.exchange.TickerBatch
+import com.neatcode.tabgreater.core.exchange.tickerBatches
+import com.neatcode.tabgreater.core.exchange.tickerBatch
+import com.neatcode.tabgreater.core.exchange.ExchangeRequests
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
@@ -165,6 +170,10 @@ class GateAdapter(
      * Gate has no multi-symbol ticker query: either one request per pair or one big request for all
      * ~2 200 tickers (~540 KB). [ALL_TICKERS_THRESHOLD] is where the single big response gets cheaper.
      */
+    override suspend fun fetchTickerBatch(markets: List<Market>): TickerBatch =
+        if (markets.size <= ALL_TICKERS_THRESHOLD) tickerBatches(markets.map { listOf(it) }, ::fetchTickers)
+        else tickerBatch(markets) { fetchTickers(markets) }
+
     override suspend fun fetchTickers(markets: List<Market>): List<Ticker> = withContext(Dispatchers.IO) {
         if (markets.isEmpty()) return@withContext emptyList()
         val byNativeSymbol = markets.associateBy { it.nativeSymbol }
@@ -204,11 +213,7 @@ class GateAdapter(
             val url = (restBase.trimEnd('/') + path).toHttpUrl().newBuilder()
             for ((name, value) in query) url.addQueryParameter(name, value)
             val request = Request.Builder().url(url.build()).get().build()
-            client.newCall(request).execute().use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) throw errorFor(response, body)
-                body
-            }
+            ExchangeRequests.execute(id, client, request, ::errorFor).body
         }
 
     /** Gate reports failures as `{"label":"INVALID_CURRENCY","message":"..."}` with a 4xx status. */

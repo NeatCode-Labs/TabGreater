@@ -10,6 +10,10 @@ import com.neatcode.tabgreater.core.data.repo.SparklineRepository
 import com.neatcode.tabgreater.core.data.repo.WatchlistRepository
 import com.neatcode.tabgreater.core.data.settings.AppSettings
 import com.neatcode.tabgreater.core.data.settings.WatchlistRefreshRates
+import com.neatcode.tabgreater.core.live.MarketState
+import com.neatcode.tabgreater.core.live.PriceFreshness
+import com.neatcode.tabgreater.core.data.repo.HistoryState
+import kotlinx.coroutines.Job
 import com.neatcode.tabgreater.core.live.LiveStatus
 import com.neatcode.tabgreater.core.live.MarketDataRepository
 import com.neatcode.tabgreater.core.model.Market
@@ -128,13 +132,16 @@ class WatchlistViewModel(
     // so the very first quote is still painted the moment it lands, and `throttleTiles` does the
     // same for the quote that first replaces the persisted snapshot — the stale prices the grid
     // shows while the sockets come back after an unlock.
-    private val tickersFlow: Flow<Map<MarketKey, Ticker>> = keysFlow
+    private val tickersFlow: Flow<Map<MarketKey, MarketState>> = keysFlow
         .flatMapLatest { keys ->
             if (keys.isEmpty()) {
                 flowOf(emptyMap())
             } else {
-                marketDataRepository.observeTickers(keys)
-                    .throttleTiles(::redrawsTile) { refreshMs.value }
+                marketDataRepository.observeMarketState(keys)
+                    .throttleTiles(
+                        changed = { a, b -> a.ticker?.let { x -> b.ticker?.let { redrawsTile(x, it) } } ?: (a.ticker != b.ticker) },
+                        alwaysChanged = { a, b -> a.freshness != b.freshness || a.failure != b.failure },
+                    ) { refreshMs.value }
             }
         }
         .onStart { emit(emptyMap()) }
@@ -159,7 +166,7 @@ class WatchlistViewModel(
             keysFlow.observeEach { key ->
                 sparklineRepository.observeSparkline(key, period)
                     .catch { e -> Log.w(TAG, "sparkline failed for ${key.value}", e) }
-            }.throttleTiles(::redrawsTile) { refreshMs.value }
+            }.throttleTiles(::redrawsTile, alwaysChanged = { a, b -> a.history != b.history }) { refreshMs.value }
         }
         .onStart { emit(emptyMap()) }
         .catch { e -> Log.w(TAG, "sparkline stream failed", e); emit(emptyMap()) }
@@ -188,9 +195,8 @@ class WatchlistViewModel(
         watchlistsFlow,
         selectedWatchlist,
         tileInputs,
-        marketDataRepository.status.onStart { emit(LiveStatus.CONNECTING) },
         extrasFlow,
-    ) { lists, watchlist, inputs, status, extras ->
+    ) { lists, watchlist, inputs, extras ->
         val period = watchlist?.period ?: SparkPeriod.HOURS_24
         // pendingOrder is read directly instead of being combined in: every change to it also
         // re-emits orderedItemsFlow, so this block always sees the value the tiles were built
@@ -204,7 +210,8 @@ class WatchlistViewModel(
             tileSize = watchlist?.tileSize ?: TileSize.SMALL,
             sort = sort,
             tiles = tiles,
-            liveStatus = status,
+            liveStatus = if (inputs.tickers.values.any { it.freshness == PriceFreshness.CURRENT }) LiveStatus.LIVE else LiveStatus.CONNECTING,
+            refreshMessage = refreshMessage(inputs),
             shrinkZeros = extras.shrinkZeros,
             selectedIds = pruneSelection(extras.selected, tiles),
             itemCounts = extras.counts,
@@ -221,6 +228,7 @@ class WatchlistViewModel(
     /** Switches tab and remembers the choice across app restarts. */
     fun selectWatchlist(id: Long) {
         val previous = uiState.value.selectedId
+        if (previous != id) refreshJob?.cancel()
         requestedId.value = id
         if (previous != id) {
             selectedIds.value = emptySet()
@@ -229,20 +237,26 @@ class WatchlistViewModel(
         viewModelScope.launch { settingsStore.setSelectedWatchlistId(id) }
     }
 
-    fun setPeriod(period: SparkPeriod) = withSelected { watchlistRepository.setPeriod(it, period) }
+    fun setPeriod(period: SparkPeriod) { refreshJob?.cancel(); withSelected { watchlistRepository.setPeriod(it, period) } }
 
     fun setTileSize(size: TileSize) = withSelected { watchlistRepository.setTileSize(it, size) }
 
     fun setSort(sort: SortMode) = withSelected { watchlistRepository.setSort(it, sort) }
 
     /** One REST round for the visible markets (app foreground, pull-to-refresh). */
+    private var refreshJob: Job? = null
+
     fun refresh() {
-        viewModelScope.launch {
+        if (refreshJob?.isActive == true) return
+        refreshJob = viewModelScope.launch {
             val state = uiState.value
             val keys = state.tiles.map { it.key }
             if (keys.isEmpty()) return@launch
-            marketDataRepository.refresh(keys)
-            sparklineRepository.refresh(keys, state.period)
+            keys.map { it.exchange }.distinct().forEach { com.neatcode.tabgreater.core.exchange.ExchangeRequests.retry(it) }
+            marketDataRepository.refreshResult(keys)
+            try { sparklineRepository.refresh(keys, state.period) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { Log.w(TAG, "history refresh failed", e) }
         }
     }
 
@@ -332,7 +346,8 @@ class WatchlistViewModel(
 
     private fun buildTiles(inputs: TileInputs, period: SparkPeriod, sort: SortMode): List<TileUiState> {
         val rows = inputs.items.map { item ->
-            val ticker = inputs.tickers[item.key]
+            val marketState = inputs.tickers[item.key]
+            val ticker = marketState?.ticker
             // The newest bar is still forming and its close only moves when the exchange pushes a
             // kline — Kraken sends none until the pair's next trade, MEXC polls once a minute — so
             // the line follows the live price instead of sitting frozen beside a moving number.
@@ -357,6 +372,21 @@ class WatchlistViewModel(
                     isUp = (numbers.changePct ?: 0.0) >= 0.0,
                     spark = spark?.points?.takeIf { it.size >= 2 },
                     accent = item.accentColor,
+                    statusLabel = when {
+                        numbers.price == null -> "No data"
+                        marketState?.freshness == PriceFreshness.OLD -> "Old"
+                        marketState?.freshness != PriceFreshness.CURRENT -> "Cached"
+                        spark != null && spark.history != HistoryState.VERIFIED -> "History"
+                        else -> null
+                    },
+                    statusDescription = listOfNotNull(
+                        when (marketState?.freshness) {
+                            PriceFreshness.OLD -> "Price has not been confirmed for at least ten minutes"
+                            PriceFreshness.CURRENT -> null
+                            else -> "Showing saved data until a price is confirmed"
+                        },
+                        if (spark != null && spark.history != HistoryState.VERIFIED) "History is not yet verified" else null,
+                    ).joinToString(". "),
                 ),
             )
         }
@@ -384,7 +414,20 @@ private class Extras(
 private data class TileInputs(
     val items: List<WatchlistItem>,
     val markets: Map<MarketKey, Market>,
-    val tickers: Map<MarketKey, Ticker>,
+    val tickers: Map<MarketKey, MarketState>,
     val sparks: Map<MarketKey, Sparkline>,
 )
 
+
+private fun refreshMessage(inputs: TileInputs): String? {
+    if (inputs.items.isEmpty()) return null
+    val states = inputs.items.mapNotNull { inputs.tickers[it.key] }
+    val failures = states.count { it.failure != null }
+    return when {
+        failures > 0 && failures < inputs.items.size -> "Some pairs could not refresh. Saved prices remain available."
+        failures > 0 -> "Refresh is unavailable. Saved prices remain available."
+        states.any { it.freshness == PriceFreshness.OLD } -> "Some prices have not updated recently."
+        states.isEmpty() || states.all { it.freshness == PriceFreshness.CACHED || it.freshness == PriceFreshness.MISSING } -> "Waiting for confirmed prices."
+        else -> null
+    }
+}

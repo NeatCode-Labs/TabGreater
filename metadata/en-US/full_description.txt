@@ -10,7 +10,8 @@ TabGreater is a crypto watchlist for Android. It shows live spot prices from fiv
 <b>Live prices</b>
 
 * A WebSocket stream while the app is open on Binance, Gate.io, Kraken and KuCoin; MEXC has no public ticker socket and is polled over REST
-* Candles are cached on disk, so tiles and charts are never empty on a cold start
+* Saved watchlist prices and mini-chart history remain available when present on the device; Cached, Old and History labels distinguish unconfirmed prices, stale prices and unverified history
+* Refresh failures have a Retry action; full charts need a successful data request for the selected pair and interval
 * Prices in en-US formatting, with signed percentages and "shrink zeros" for sub-cent pairs (0.0₄123)
 
 <b>Charts</b>
@@ -23,10 +24,10 @@ TabGreater is a crypto watchlist for Android. It shows live spot prices from fiv
 
 <b>Home-screen widgets</b>
 
-* One pair per widget. It drops as 2 x 1 and resizes from 110 x 40 dp up to 4 x 2 and beyond, drawing the same layout at every size
+* Resizable home-screen widgets, one pair per widget
 * The sparkline is a switch, on by default, and always shows the last 24 hours
 * A refresh cadence of your choice, from timed updates to a live connection
-* No notification of any kind, and a measured cost of about 1.5 % of the battery per day for three widgets at the default five-minute cadence
+* Android may show a system notification while the foreground service keeps widgets updated; TabGreater does not request notification permission or send price alerts
 
 <b>Tokenized stocks</b>
 
@@ -41,7 +42,7 @@ Spot markets from Binance, Gate.io, Kraken, KuCoin and MEXC. Exchange names are 
 
 <b>Privacy</b>
 
-TabGreater has no server and collects nothing. Because prices come straight from each exchange's public API, your IP address and the pairs you watch are visible to the exchanges you use, under their terms. Nothing else leaves the device.
+TabGreater has no backend, analytics or advertising. Prices come straight from each exchange's public API, so your IP address and requested pairs are visible to those exchanges. The add-pair screen can request CoinGecko's public ranking at most once a day for popular-pair suggestions; it falls back to saved or built-in suggestions. Lists, settings and drawings stay on your device and can be included in Android backup. Exporting or sharing sends only what you choose through the destination app.
 
 <b>Disclaimer</b>
 

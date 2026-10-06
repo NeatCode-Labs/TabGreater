@@ -168,6 +168,7 @@ class KrakenAdapterRestTest {
             val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
 
             assertTrue("expected ExchangeHttpException for $code, got $error", error is ExchangeHttpException)
+            assertEquals(com.neatcode.tabgreater.core.exchange.ExchangeFailureKind.TRANSIENT, (error as ExchangeHttpException).kind)
             assertTrue(error!!.message!!, error.message!!.contains(code))
         }
         assertEquals(4, server.requestCount)

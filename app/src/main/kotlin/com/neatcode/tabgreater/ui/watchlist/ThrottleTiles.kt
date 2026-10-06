@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.map
  */
 internal fun <K, V> Flow<Map<K, V>>.throttleTiles(
     changed: (shown: V, next: V) -> Boolean,
+    alwaysChanged: (shown: V, next: V) -> Boolean = { _, _ -> false },
     periodMs: () -> Long,
 ): Flow<Map<K, V>> {
     val upstream = this
@@ -61,6 +62,7 @@ internal fun <K, V> Flow<Map<K, V>>.throttleTiles(
                     served.retainAll(next.keys)
                     for ((key, value) in next) {
                         val shown = previous?.get(key) ?: continue
+                        if (alwaysChanged(shown, value)) free = true
                         if (!changed(shown, value) || key in served) continue
                         served += key
                         free = true

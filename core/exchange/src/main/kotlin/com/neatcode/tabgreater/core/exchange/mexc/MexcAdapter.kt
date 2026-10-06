@@ -1,5 +1,10 @@
 package com.neatcode.tabgreater.core.exchange.mexc
 
+import com.neatcode.tabgreater.core.exchange.TickerBatch
+import com.neatcode.tabgreater.core.exchange.tickerBatches
+import com.neatcode.tabgreater.core.exchange.tickerBatch
+import com.neatcode.tabgreater.core.exchange.ExchangeRequests
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
@@ -150,6 +155,10 @@ class MexcAdapter(
      * partial list, and the poll loop above would read that as a healthy tick and keep hammering
      * MEXC at full rate instead of backing off. Those are rethrown at once.
      */
+    override suspend fun fetchTickerBatch(markets: List<Market>): TickerBatch =
+        if (markets.size <= ALL_TICKERS_THRESHOLD) tickerBatches(markets.map { listOf(it) }, ::fetchTickers)
+        else tickerBatch(markets) { fetchTickers(markets) }
+
     override suspend fun fetchTickers(markets: List<Market>): List<Ticker> = withContext(Dispatchers.IO) {
         if (markets.isEmpty()) return@withContext emptyList()
         if (markets.size <= ALL_TICKERS_THRESHOLD) {
@@ -272,11 +281,7 @@ class MexcAdapter(
         val url = (restBase.trimEnd('/') + path).toHttpUrl().newBuilder()
         for ((name, value) in query) url.addQueryParameter(name, value)
         val request = Request.Builder().url(url.build()).get().build()
-        client.newCall(request).execute().use { response ->
-            val body = response.body.string()
-            if (!response.isSuccessful) throw errorFor(response, body)
-            body
-        }
+        ExchangeRequests.execute(id, client, request, ::errorFor).body
     }
 
     /** Every endpoint has its own 500-weight / 10 s window, so buckets are per path. */

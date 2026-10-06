@@ -25,6 +25,27 @@ class ThrottleTilesTest {
     private fun Flow<Map<String, Quote>>.tiles(): Flow<Map<String, Quote>> =
         throttleTiles({ shown, next -> shown.price != next.price }) { period }
 
+    @Test fun `status transitions bypass a spent price throttle across 120 pairs`() = runTest {
+        val upstream = MutableSharedFlow<Map<String, Quote>>()
+        upstream.throttleTiles({ a, b -> a.price != b.price }, { a, b -> a.stamp != b.stamp }) { period }.test {
+            runCurrent()
+            val initial = (1..120).associate { it.toString() to Quote(100) }
+            upstream.emit(initial)
+            assertEquals(120, awaitItem().size)
+            val priced = initial.mapValues { Quote(101) }
+            upstream.emit(priced)
+            awaitItem()
+            val confirmed = priced + ("120" to Quote(101, 1))
+            upstream.emit(confirmed)
+            assertEquals(1, awaitItem().getValue("120").stamp)
+            val old = confirmed + ("120" to Quote(101, 2))
+            upstream.emit(old)
+            assertEquals(2, awaitItem().getValue("120").stamp)
+            assertEquals(0L, testScheduler.currentTime)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     @Test
     fun `the value that first redraws a tile is not held`() = runTest {
         val upstream = MutableSharedFlow<Map<String, Quote>>()

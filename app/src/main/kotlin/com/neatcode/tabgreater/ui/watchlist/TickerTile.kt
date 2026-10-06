@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -18,6 +19,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -60,11 +64,12 @@ fun TickerTile(
     selected: Boolean = false,
     shrinkZeros: Boolean = true,
 ) {
+    val accessibleModifier = modifier.semantics { stateDescription = tile.statusDescription }
     when (size) {
-        TileSize.SMALL -> SmallTile(tile, modifier, selected, shrinkZeros)
-        TileSize.COMPACT -> CompactTile(tile, modifier, selected, shrinkZeros)
-        TileSize.MEDIUM -> MediumTile(tile, modifier, selected, shrinkZeros)
-        TileSize.LARGE -> LargeTile(tile, modifier, selected, shrinkZeros)
+        TileSize.SMALL -> SmallTile(tile, accessibleModifier, selected, shrinkZeros)
+        TileSize.COMPACT -> CompactTile(tile, accessibleModifier, selected, shrinkZeros)
+        TileSize.MEDIUM -> MediumTile(tile, accessibleModifier, selected, shrinkZeros)
+        TileSize.LARGE -> LargeTile(tile, accessibleModifier, selected, shrinkZeros)
     }
 }
 
@@ -74,8 +79,7 @@ fun TickerTile(
  * percentage right-aligned at the bottom.
  *
  * The price uses the leading-zero compression, so `0.000071501` renders as `0.0₃71501`
- * (unless [shrinkZeros] is off). The layout was signed off pixel-for-pixel in F1 — nothing in
- * it may move.
+ * (unless [shrinkZeros] is off). At larger system fonts the tile grows to keep every row visible.
  */
 @Composable
 private fun SmallTile(
@@ -85,30 +89,16 @@ private fun SmallTile(
     shrinkZeros: Boolean = true,
 ) {
     val trend = if (tile.isUp) TG.Up else TG.Down
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(TGDimens.TILE_ASPECT_SMALL)
-            .shadow(
-                elevation = TGDimens.TILE_ELEVATION_DP.dp,
-                shape = TileShape,
-                ambientColor = TG.Scrim,
-                spotColor = TG.Scrim,
-            )
-            .clip(TileShape)
-            .background(TG.Surface)
-            .then(if (selected) Modifier.border(TILE_SELECTION_BORDER_DP.dp, TG.Accent, TileShape) else Modifier),
+    val largeText = LocalDensity.current.fontScale > 1.3f
+    TileSurface(
+        modifier = modifier,
+        aspectRatio = TGDimens.TILE_ASPECT_SMALL,
+        selected = selected,
+        growable = true,
     ) {
-        tile.accent?.let { argb ->
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .width(TGDimens.TILE_STRIPE_DP.dp)
-                    .background(Color(argb)),
-            )
-        }
+        Box(Modifier.matchParentSize()) { TileAccentStripe(tile.accent) }
 
-        Sparkline(
+        if (!largeText) Sparkline(
             values = tile.spark,
             color = trend,
             modifier = Modifier
@@ -119,7 +109,8 @@ private fun SmallTile(
 
         Column(
             Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .tileRowHeight(TGDimens.TILE_ASPECT_SMALL)
                 .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
         ) {
             Row(
@@ -127,10 +118,11 @@ private fun SmallTile(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = tile.exchangeLabel,
+                    text = listOfNotNull(tile.exchangeLabel, tile.statusLabel).joinToString(" · "),
                     style = TGType.exchange,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 ExchangeGlyph(tile.key.exchange, size = 10.dp)
             }
@@ -140,7 +132,13 @@ private fun SmallTile(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 // Stop before the sparkline box (61 dp + 8 dp end inset) so long pairs ellipsise.
-                modifier = Modifier.padding(end = (TGDimens.SPARK_W_DP + 4).dp),
+                modifier = Modifier.padding(end = if (largeText) 0.dp else (TGDimens.SPARK_W_DP + 4).dp),
+            )
+
+            if (largeText) Sparkline(
+                values = tile.spark,
+                color = trend,
+                modifier = Modifier.fillMaxWidth().height(TGDimens.SPARK_H_DP.dp),
             )
 
             Spacer(Modifier.weight(1f))

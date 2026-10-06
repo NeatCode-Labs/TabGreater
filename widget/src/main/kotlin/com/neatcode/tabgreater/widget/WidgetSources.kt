@@ -47,20 +47,15 @@ internal fun reconcileConfigs(
 ): Map<Int, WidgetConfig> = if (bound == null) stored else stored.filterKeys { it in bound }
 
 /**
- * Picks the newest known [Ticker] for a market out of the two places the live layer keeps one.
- *
- * [MarketDataRepository.latest] is written **only** by the WebSocket collector and is never
- * shrunk when a stream stops, while every REST round (`SLEEP` tick, `NEAR` polling, the 15-minute
- * worker) persists into `ticker_snapshots` and leaves `latest` alone. Preferring the in-memory map
- * therefore froze the widget on the last socket price for as long as the process lived
- * (findings 16 / 22), so both sources are read and the newer timestamp wins — the same rule
- * `LiveMarketDataRepository.mergeTickers` applies for the app UI.
+ * Accepted in-process REST/stream values take precedence over disk. The timestamp fallback
+ * supports repository implementations without receipt metadata and process-start cache reads.
  */
 internal class TickerResolver(
     private val marketData: MarketDataRepository,
     private val snapshots: TickerSnapshotDao,
 ) {
     suspend fun resolve(key: MarketKey): Ticker? {
+        marketData.currentState(key)?.ticker?.let { return it }
         val live = marketData.latest.value[key]
         val stored = runCatching { snapshots.get(key.value) }.getOrNull()?.toTicker(key)
         return newest(live, stored)

@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.map
  *
  * Two rules make a 2-second cadence affordable:
  * the refresher never hits the network itself — it reads whichever of [MarketDataRepository.latest]
- * and the persisted Room snapshot carries the **newer** timestamp ([TickerResolver]) — and it only
+ * and the persisted Room snapshot is authoritative ([TickerResolver]) — and it only
  * re-reads the candle cache when `includeSparklines` is set, keeping the previous points otherwise.
  *
  * Everything it does is reconciled against the widgets the host actually owns ([BoundWidgetIds]),
@@ -40,7 +40,7 @@ import kotlinx.coroutines.flow.map
 class GlanceWidgetRefresher internal constructor(
     private val context: Context,
     private val configs: WidgetConfigStore,
-    marketData: MarketDataRepository,
+    private val marketData: MarketDataRepository,
     private val markets: MarketRepository,
     snapshots: TickerSnapshotDao,
     private val sparklines: SparklineRepository,
@@ -147,13 +147,17 @@ class GlanceWidgetRefresher internal constructor(
         val precision = precisionFor(config.key)
         // Read regardless of `showSparkline`: the points also back the 24 h change when the
         // ticker carries none (Kraken over REST), and the widget itself decides whether to draw.
-        val spark = if (includeSparklines) loadSpark(config.key) else previous?.spark.orEmpty()
+        val history = sparklines.cached(config.key, SparkPeriod.HOURS_24)
+        val spark = if (includeSparklines) history.points.toList() else previous?.spark.orEmpty()
         val model = WidgetModelFactory.build(
             config = config,
             ticker = ticker,
             pricePrecision = precision,
             spark = spark,
             now = System.currentTimeMillis(),
+            confirmedAtEpochMs = marketData.currentState(config.key)?.confirmedAtEpochMs,
+            isStale = marketData.currentState(config.key)?.freshness != com.neatcode.tabgreater.core.live.PriceFreshness.CURRENT,
+            historyAnchor = history.takeIf { it.history == com.neatcode.tabgreater.core.data.repo.HistoryState.VERIFIED }?.firstClose,
         )
         if (model == previous && !force) return false
         return try {

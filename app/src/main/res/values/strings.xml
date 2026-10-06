@@ -153,6 +153,13 @@
     <string name="chart_type_area">Area</string>
     <string name="chart_indicators_title">Indicators</string>
     <string name="chart_unavailable">%1$s is not listed on this exchange</string>
+    <string name="chart_loading">Loading chart…</string>
+    <string name="chart_renderer_unsupported">This device’s WebView provider does not support the chart. Update Android System WebView.</string>
+    <string name="chart_renderer_unavailable">The chart renderer stopped unexpectedly. Try again.</string>
+    <string name="chart_data_unavailable">Chart data could not be loaded. Try again.</string>
+    <string name="chart_data_rate_limited">The exchange is temporarily limiting chart requests. Try again later.</string>
+    <string name="chart_data_market_unavailable">This market is unavailable from the exchange.</string>
+    <string name="chart_retry">Retry</string>
     <string name="chart_star_list_full">Watchlist is full (%1$d)</string>
     <string name="chart_star_no_list">No watchlist</string>
     <!-- /F4: chart -->

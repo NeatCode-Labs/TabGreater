@@ -38,6 +38,8 @@ data class TileUiState(
     val isUp: Boolean,
     val spark: FloatArray?,
     val accent: Long?,
+    val statusLabel: String? = null,
+    val statusDescription: String = "",
 ) {
     override fun equals(other: Any?): Boolean {
         if (other !is TileUiState) return false
@@ -57,13 +59,15 @@ data class TileUiState(
             lowText == other.lowText &&
             volumeText == other.volumeText &&
             isUp == other.isUp &&
-            accent == other.accent &&
+            accent == other.accent && statusLabel == other.statusLabel && statusDescription == other.statusDescription &&
             sparkEquals
     }
 
     override fun hashCode(): Int {
         var result = itemId.hashCode()
         result = 31 * result + key.hashCode()
+        result = 31 * result + statusLabel.hashCode()
+        result = 31 * result + statusDescription.hashCode()
         result = 31 * result + exchangeLabel.hashCode()
         result = 31 * result + pair.hashCode()
         result = 31 * result + (priceText?.hashCode() ?: 0)
@@ -96,6 +100,7 @@ data class WatchlistUiState(
     val sort: SortMode = SortMode.CUSTOM,
     val tiles: List<TileUiState> = emptyList(),
     val liveStatus: LiveStatus = LiveStatus.CONNECTING,
+    val refreshMessage: String? = null,
     val shrinkZeros: Boolean = true,
     val selectedIds: Set<Long> = emptySet(),
     val itemCounts: Map<Long, Int> = emptyMap(),

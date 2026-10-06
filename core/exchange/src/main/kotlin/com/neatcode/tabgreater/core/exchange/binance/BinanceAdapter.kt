@@ -1,5 +1,7 @@
 package com.neatcode.tabgreater.core.exchange.binance
 
+import com.neatcode.tabgreater.core.exchange.ExchangeRequests
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
@@ -167,11 +169,7 @@ class BinanceAdapter(
             val url = (restBase.trimEnd('/') + path).toHttpUrl().newBuilder()
             for ((name, value) in query) url.addQueryParameter(name, value)
             val request = Request.Builder().url(url.build()).get().build()
-            client.newCall(request).execute().use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) throw errorFor(response, body)
-                body
-            }
+            ExchangeRequests.execute(id, client, request, ::errorFor).body
         }
 
     private fun errorFor(response: Response, body: String): Exception {
@@ -226,7 +224,7 @@ class BinanceAdapter(
                         if (previous != null && now - previous < QUOTE_PUSH_INTERVAL_NS) return@collect
                         val event = decodeOrNull<BookTickerEvent>(frame.second) ?: return@collect
                         lastQuoteAt[market.key] = now
-                        base.copy(bid = event.bidPrice.toDoubleOrNull(), ask = event.askPrice.toDoubleOrNull())
+                        base.copy(bid = event.bidPrice.toDoubleOrNull(), ask = event.askPrice.toDoubleOrNull(), confirmsPrice = false)
                     } else {
                         val event = decodeOrNull<MiniTickerEvent>(frame.second) ?: return@collect
                         val previous = latest[market.key]

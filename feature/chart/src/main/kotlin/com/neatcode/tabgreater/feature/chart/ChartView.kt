@@ -2,6 +2,7 @@ package com.neatcode.tabgreater.feature.chart
 
 import android.view.ViewGroup
 import android.webkit.WebView
+import android.os.SystemClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +22,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -61,10 +63,25 @@ fun ChartView(
     onDrawingCommandHandled: (DrawingCommand) -> Unit = {},
     debuggable: Boolean = false,
 ) {
+    val target = remember(market, timeframe) { ChartTarget(market.key, timeframe) }
+    val cacheGeneration = ChartWebViewCache.generation
+    when (remember(cacheGeneration) { ChartWebViewCache.supportStatus() }) {
+        ChartWebViewSupport.UNSUPPORTED -> {
+            LaunchedEffect(bridge, target) { bridge.reportUnsupported(target) }
+            return
+        }
+        ChartWebViewSupport.UNAVAILABLE -> {
+            LaunchedEffect(bridge, target) {
+                bridge.reportUnavailable(target, "The system WebView could not be checked.")
+            }
+            return
+        }
+        ChartWebViewSupport.SUPPORTED -> Unit
+    }
     // A renderer crash (or a trim while the screen was away) destroys the cached WebView; the
     // cache bumps its generation and the whole subtree below is rebuilt around a fresh instance.
     // `key` rather than `remember(generation)`: AndroidView's factory only runs for a new node.
-    key(ChartWebViewCache.generation) {
+    key(cacheGeneration) {
         ChartCanvas(
             market = market,
             timeframe = timeframe,
@@ -102,7 +119,17 @@ private fun ChartCanvas(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val webView = remember { ChartWebViewCache.obtain(context, bridge, debuggable) }
+    val initiallyVisible = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+    val webViewResult = remember {
+        ChartWebViewCache.obtain(context, bridge, debuggable, initiallyVisible)
+    }
+    val webView = webViewResult.getOrNull()
+    if (webView == null) {
+        LaunchedEffect(bridge, market, timeframe, webViewResult) {
+            bridge.reportUnavailable(ChartTarget(market.key, timeframe))
+        }
+        return
+    }
     val hostToken = remember { bridge.attachHost() }
     var booted by remember { mutableStateOf(false) }
     var size by remember { mutableStateOf(IntSize.Zero) }
@@ -122,20 +149,52 @@ private fun ChartCanvas(
         onRelease = { },
     )
 
-    // One atomic swap per market/timeframe change, so only one getBars('init') goes out.
-    LaunchedEffect(market, timeframe) {
-        bridge.awaitReady()
-        val symbol = ChartProtocol.json.encodeToString(ChartSymbol.serializer(), market.toChartSymbol())
-        val period = ChartProtocol.json.encodeToString(ChartPeriod.serializer(), ChartPeriods.of(timeframe))
-        // KLineChart renders `{span:1,type:'minute'}` as a bare "1"; the legend gets our own label.
-        val label = ChartProtocol.json.encodeToString(String.serializer(), timeframe.label)
-        bridge.onMarketChanged()
-        // Awaited, so a drawing set the page flushes for the outgoing series while it swaps has
-        // reached the bridge before this market's drawings are read back.
-        webView.evalAwait("tg.setMarket($symbol,$period,$label)")
-        // The page holds the set until this market's first bars are on the canvas.
-        webView.eval("window.tg&&tg.setDrawings(${bridge.drawingsPayloadFor(market, currentMagnet)})")
-        booted = true
+    // The 10 s budget counts only foreground time. Stopping the Activity cancels this wait and the
+    // remaining budget resumes on the next STARTED transition.
+    LaunchedEffect(market, timeframe, webView, hostToken) {
+        val target = ChartTarget(market.key, timeframe)
+        val targetToken = bridge.onMarketChanged(target, hostToken)
+        val pageToken = bridge.activePageToken
+        var remainingMs = HANDSHAKE_TIMEOUT_MS
+        var configured = false
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            if (configured || !bridge.isCurrentHost(hostToken)) return@repeatOnLifecycle
+            val startedAt = SystemClock.elapsedRealtime()
+            try {
+                val pageReady = withTimeoutOrNull(remainingMs) {
+                    bridge.awaitReady()
+                    true
+                } ?: false
+                if (!pageReady) {
+                    if (remainingMs <= 0L || SystemClock.elapsedRealtime() - startedAt >= remainingMs) {
+                        ChartWebViewCache.onStartupFailure(webView, hostToken, targetToken, pageToken)
+                    }
+                    return@repeatOnLifecycle
+                }
+
+                if (!bridge.isCurrentHost(hostToken)) return@repeatOnLifecycle
+                val symbol = ChartProtocol.json.encodeToString(ChartSymbol.serializer(), market.toChartSymbol())
+                val period = ChartProtocol.json.encodeToString(ChartPeriod.serializer(), ChartPeriods.of(timeframe))
+                // KLineChart renders `{span:1,type:'minute'}` as a bare "1"; the legend gets our own label.
+                val label = ChartProtocol.json.encodeToString(String.serializer(), timeframe.label)
+                // The page first flushes outgoing drawings, then adopts these ownership tokens for
+                // every ensuing RPC, state notice and live-bar subscription.
+                val script = "(function(){if(!window.tg||typeof tg.setMarket!=='function')return false;" +
+                    "return tg.setMarket($symbol,$period,$label,$hostToken,$targetToken)===true;})()"
+                if (!webView.evalAwait(script)) {
+                    ChartWebViewCache.onStartupFailure(webView, hostToken, targetToken, pageToken)
+                    return@repeatOnLifecycle
+                }
+                if (!bridge.isCurrentHost(hostToken)) return@repeatOnLifecycle
+                // The page holds the set until this market's first bars are on the canvas.
+                webView.eval("window.tg&&tg.setDrawings(${bridge.drawingsPayloadFor(market, currentMagnet)})")
+                configured = true
+                booted = true
+            } finally {
+                val spent = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+                remainingMs = (remainingMs - spent).coerceAtLeast(0L)
+            }
+        }
     }
     LaunchedEffect(indicators, booted) {
         if (!booted) return@LaunchedEffect
@@ -229,12 +288,21 @@ private fun WebView.eval(js: String) = post { evaluateJavascript(js, null) }
  * [eval] that suspends until the page has run [js]. Bounded: a WebView torn down mid-call never
  * answers, and the caller must not hang on it.
  */
-private suspend fun WebView.evalAwait(js: String) {
+private suspend fun WebView.evalAwait(js: String): Boolean =
     withTimeoutOrNull(EVAL_TIMEOUT_MS) {
         suspendCancellableCoroutine { cont ->
-            post { evaluateJavascript(js) { if (cont.isActive) cont.resume(Unit) } }
+            val queued = post {
+                try {
+                    evaluateJavascript(js) { value ->
+                        if (cont.isActive) cont.resume(value?.trim() == "true")
+                    }
+                } catch (_: Throwable) {
+                    if (cont.isActive) cont.resume(false)
+                }
+            }
+            if (!queued && cont.isActive) cont.resume(false)
         }
-    }
-}
+    } ?: false
 
+private const val HANDSHAKE_TIMEOUT_MS = 10_000L
 private const val EVAL_TIMEOUT_MS = 2_000L

@@ -17,6 +17,11 @@ android {
             isMinifyEnabled = false
         }
     }
+
+    testOptions {
+        // Android logging is a no-op in JVM tests of repository failure paths.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {

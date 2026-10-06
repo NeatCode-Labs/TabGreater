@@ -32,6 +32,26 @@ data class Req(
     val id: String? = null,
     val action: String,
     val payload: JsonObject = JsonObject(emptyMap()),
+    val hostGeneration: Long? = null,
+    val targetGeneration: Long? = null,
+)
+
+/** Structured RPC failure metadata; the `error` field on the wire remains backwards-compatible. */
+@Serializable
+data class ChartRpcFailure(
+    val error: String,
+    val failureKind: String,
+    val retryable: Boolean,
+    val retryAfterMs: Long = 0L,
+)
+
+@Serializable
+data class ChartDataState(
+    val ready: Boolean,
+    val error: String? = null,
+    val failureKind: String? = null,
+    val retryable: Boolean = false,
+    val retryAfterMs: Long = 0L,
 )
 
 /**
@@ -105,6 +125,7 @@ object ChartProtocol {
     const val ACTION_UNSUBSCRIBE_BAR = "unsubscribeBar"
     const val ACTION_LOG = "log"
     const val ACTION_READY = "ready"
+    const val ACTION_DATA_STATE = "dataState"
 
     /** Notice: the user's drawings for one market changed (payload: [DrawingsPayload]). */
     const val ACTION_DRAWINGS_CHANGED = "drawingsChanged"

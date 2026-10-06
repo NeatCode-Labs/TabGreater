@@ -171,6 +171,7 @@ internal fun DrawingSheet(
     onDrawingsVisible: (Boolean) -> Unit,
     onDeleteAll: () -> Unit,
     onDismiss: () -> Unit,
+    enabled: Boolean = true,
     immersive: Boolean = false,
 ) {
     val window = LocalWindowInfo.current.containerDpSize
@@ -195,6 +196,7 @@ internal fun DrawingSheet(
                         label = stringResource(drawingToolLabelRes(tool.name)),
                         selected = drawingState.drawing && drawingState.tool == tool.name,
                         role = Role.Button,
+                        enabled = enabled,
                         onClick = { onPickTool(tool.name) },
                     )
                 }
@@ -205,6 +207,7 @@ internal fun DrawingSheet(
                     label = stringResource(mode.labelRes),
                     selected = mode == magnetMode,
                     role = Role.RadioButton,
+                    enabled = enabled,
                     onClick = { onMagnetMode(mode) },
                 )
             }
@@ -213,13 +216,14 @@ internal fun DrawingSheet(
                 label = stringResource(R.string.chart_draw_show),
                 checked = drawingsVisible,
                 onClick = { onDrawingsVisible(!drawingsVisible) },
+                enabled = enabled,
             )
             TGSheetOption(
                 label = stringResource(R.string.chart_draw_delete_all),
                 checked = false,
                 onClick = onDeleteAll,
                 trailingText = drawingState.count.takeIf { it > 0 }?.toString(),
-                enabled = drawingState.count > 0,
+                enabled = enabled && drawingState.count > 0,
             )
         }
     }
@@ -243,12 +247,18 @@ private fun <T> CellGrid(items: List<T>, columns: Int, cell: @Composable RowScop
  * [selected] is also exposed to accessibility services ([role] `RadioButton` for the magnet).
  */
 @Composable
-private fun RowScope.SheetCell(label: String, selected: Boolean, role: Role, onClick: () -> Unit) {
+private fun RowScope.SheetCell(
+    label: String,
+    selected: Boolean,
+    role: Role,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .weight(1f)
             .height(ToolCellHeight)
-            .selectable(selected = selected, role = role, onClick = onClick)
+            .selectable(selected = selected, enabled = enabled, role = role, onClick = onClick)
             .padding(start = 16.dp, end = 8.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -359,6 +369,7 @@ internal fun DrawingStrip(
     canvasHeight: Dp,
     bottomReserve: Dp,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     if (!state.busy) return
     val slot = stripSlot(state, canvasHeight.value.toInt(), bottomReserve.value.toInt())
@@ -375,7 +386,7 @@ internal fun DrawingStrip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             StripLabel(stringResource(R.string.chart_draw_placing, stringResource(drawingToolLabelRes(state.tool))))
-            StripIcon(Icons.Outlined.Close, stringResource(R.string.cd_chart_draw_cancel), onCancel)
+            StripIcon(Icons.Outlined.Close, stringResource(R.string.cd_chart_draw_cancel), onCancel, enabled = enabled)
         }
 
         else -> Row(
@@ -390,8 +401,9 @@ internal fun DrawingStrip(
                 ),
                 onClick = onToggleLock,
                 active = state.selectedLocked,
+                enabled = enabled,
             )
-            StripIcon(Icons.Outlined.Delete, stringResource(R.string.cd_chart_draw_delete), onDelete)
+            StripIcon(Icons.Outlined.Delete, stringResource(R.string.cd_chart_draw_delete), onDelete, enabled = enabled)
         }
     }
 }
@@ -426,11 +438,12 @@ private fun StripIcon(
     contentDescription: String,
     onClick: () -> Unit,
     active: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier = Modifier
             .size(STRIP_TOUCH_DP.dp)
-            .clickable(role = Role.Button, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -438,13 +451,13 @@ private fun StripIcon(
                 .size(StripPillHeight)
                 .clip(StripShape)
                 .background(TG.ChipFill)
-                .border(1.dp, if (active) TG.Accent else TG.Outline, StripShape),
+                .border(1.dp, if (enabled && active) TG.Accent else TG.Outline, StripShape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = imageVector,
                 contentDescription = contentDescription,
-                tint = if (active) TG.Accent else TG.TextPrimary,
+                tint = when { !enabled -> TG.TextTertiary; active -> TG.Accent; else -> TG.TextPrimary },
                 modifier = Modifier.size(16.dp),
             )
         }
@@ -572,6 +585,7 @@ internal fun DeleteAllDrawingsDialog(
     market: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    enabled: Boolean = true,
     immersive: Boolean = false,
 ) {
     AlertDialog(
@@ -585,7 +599,7 @@ internal fun DeleteAllDrawingsDialog(
         },
         text = { Text(text = stringResource(R.string.chart_draw_delete_all_body, market), style = TGType.body) },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
+            TextButton(onClick = onConfirm, enabled = enabled) {
                 Text(
                     text = stringResource(R.string.chart_draw_delete_all_confirm),
                     style = TGType.button,

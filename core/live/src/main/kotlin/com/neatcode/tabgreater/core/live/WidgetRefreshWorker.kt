@@ -10,6 +10,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.neatcode.tabgreater.core.data.repo.SparklineRepository
+import com.neatcode.tabgreater.core.exchange.canRetryAutomatically
+import com.neatcode.tabgreater.core.exchange.exchangeFailureKind
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -35,16 +38,27 @@ class WidgetRefreshWorker(
         val widgets = resolveWidgetRefresher()
         return try {
             val keys = widgets.observeWidgetKeys().first()
+            var transientFailure = false
             if (keys.isNotEmpty()) {
-                marketData.refresh(keys)
-                diagnostics.onRestRound(System.currentTimeMillis())
+                val result = marketData.refreshResult(keys)
+                if (result.complete) diagnostics.onRestRound(System.currentTimeMillis())
+                else {
+                    val error = result.failures.values.firstOrNull() ?: IllegalStateException("Some markets returned no price")
+                    diagnostics.onError(WHAT_REST_ROUND, error)
+                    transientFailure = result.failures.values.any { it.exchangeFailureKind() == ExchangeFailureKind.TRANSIENT }
+                }
                 // Without this the 24 h candle window of a widget-only pair stays whatever the
                 // configuration screen fetched once, and the sparkline freezes for good.
-                sparklines.refresh(keys, SparkPeriod.HOURS_24)
+                try { sparklines.refresh(keys, SparkPeriod.HOURS_24) }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    diagnostics.onError("sparkline refresh", e)
+                    transientFailure = transientFailure || e.exchangeFailureKind() == ExchangeFailureKind.TRANSIENT
+                }
             }
             val painted = widgets.refreshAll(true)
             diagnostics.onWidgetRefresh(System.currentTimeMillis(), painted)
-            Result.success()
+            if (transientFailure) Result.retry() else Result.success()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
