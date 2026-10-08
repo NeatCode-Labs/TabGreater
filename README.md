@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.neatcode.tabgreater"><img src="https://img.shields.io/badge/Google%20Play-Download-414141?style=for-the-badge&amp;logo=googleplay" alt="Download from Google Play"></a>
   <a href="https://f-droid.org/packages/com.neatcode.tabgreater/"><img src="https://img.shields.io/badge/F--Droid-Download-1976D2?style=for-the-badge&amp;logo=f-droid" alt="Download from F-Droid"></a>
   <a href="https://github.com/NeatCode-Labs/TabGreater/releases/latest"><img src="https://img.shields.io/badge/GitHub-Download%20APK-181717?style=for-the-badge&amp;logo=github" alt="Download APK from GitHub"></a>
 </p>
@@ -91,15 +92,23 @@ exchanges directly: there is no backend, no account and nothing is collected.
 
 ## Installation
 
-Install it from **[F-Droid](https://f-droid.org/packages/com.neatcode.tabgreater/)**, or download the
+Install it from **[Google Play](https://play.google.com/store/apps/details?id=com.neatcode.tabgreater)**
+or **[F-Droid](https://f-droid.org/packages/com.neatcode.tabgreater/)**, or download the
 latest signed APK from **[tabgreater.com/download](https://tabgreater.com/download)** or straight from
-**[GitHub Releases](https://github.com/NeatCode-Labs/TabGreater/releases/latest)**. Every release lists
+**[GitHub Releases](https://github.com/NeatCode-Labs/TabGreater/releases/latest)**. Every GitHub release lists
 the SHA-256 of the APK and of the signing certificate, so you can check what you downloaded.
 
 F-Droid rebuilds each release from source, checks that the result matches the APK published on GitHub
 and then ships that same APK, signed with the NeatCode Labs key. You can therefore move between F-Droid
 and the GitHub download without uninstalling. A new release reaches F-Droid a few days after it is
 tagged.
+
+Google Play provides the `play` flavour; F-Droid and GitHub provide `foss`.
+The Play build omits the auto-granted exact-alarm and direct battery-optimisation exemption
+permissions; user-granted exact alarms remain available.
+For updates, use the channel you installed from. The F-Droid/GitHub signing compatibility above
+does not establish compatibility with Google Play. Before switching channels, export your
+watchlists to JSON; an incompatible signature can require uninstalling and importing them again.
 
 Android 8.0 (API 26) or newer. APK installs may require temporarily allowing
 your browser or file manager to install unknown apps.

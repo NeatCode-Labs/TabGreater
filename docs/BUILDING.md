@@ -44,6 +44,6 @@ Also check the signed APK on an emulator: load one market online, enable airplan
 
 ## Release
 
-`./gradlew assembleFossRelease` produces the R8-minified APK for GitHub Releases and F-Droid; `./gradlew bundlePlayRelease` the AAB for Google Play. Both are signed with the key named in `keystore.properties` (git-ignored). F-Droid metadata (descriptions, changelogs, icon, screenshots) lives in `metadata/en-US/`. Releases on GitHub are signed with the NeatCode Labs key; its SHA-256 certificate fingerprint is published in the release notes so you can verify an APK with `apksigner verify --print-certs`.
+`./gradlew assembleFossRelease` produces the R8-minified APK for GitHub Releases and F-Droid; `./gradlew bundlePlayRelease` the AAB for Google Play. Both local artifacts are signed with the key named in `keystore.properties` (git-ignored). This does not establish which signing certificate Google Play uses for delivered APKs or whether they can update a FOSS installation. F-Droid metadata (descriptions, changelogs, icon, screenshots) lives in `metadata/en-US/`. Releases on GitHub are signed with the NeatCode Labs key; its SHA-256 certificate fingerprint is published in the release notes so you can verify a FOSS APK with `apksigner verify --print-certs`. For ready-to-install builds from Google Play, F-Droid or GitHub, see [Installation](../README.md#installation).
 
 Regenerating the launcher icon and the app-bar brand glyph from `art/launcher-logo.jpg`: `python tools/launcher_icon.py` (needs Pillow and numpy).
