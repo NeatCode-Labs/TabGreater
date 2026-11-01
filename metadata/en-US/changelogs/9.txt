@@ -1,0 +1,3 @@
+• Refresh widgets promptly after unlocking the phone.
+• Show updated widget prices before waiting for sparkline data.
+• Retry interrupted price requests after their cooldown instead of waiting for the next periodic refresh.

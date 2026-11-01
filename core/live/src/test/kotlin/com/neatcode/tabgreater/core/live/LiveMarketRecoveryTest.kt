@@ -34,9 +34,15 @@ class LiveMarketRecoveryTest {
         override val nativeTimeframes = Timeframe.entries.toSet()
         val stream = MutableSharedFlow<Ticker>(extraBufferCapacity = 8)
         var response: suspend (List<Market>) -> List<Ticker> = { emptyList() }
+        var batchResponse: (suspend (List<Market>) -> TickerBatch)? = null
         var calls = 0
         override suspend fun listMarkets() = emptyList<Market>()
         override suspend fun fetchTickers(markets: List<Market>): List<Ticker> { calls++; return response(markets) }
+        override suspend fun fetchTickerBatch(markets: List<Market>): TickerBatch {
+            val batch = batchResponse ?: return super.fetchTickerBatch(markets)
+            calls++
+            return batch(markets)
+        }
         override suspend fun fetchOHLCV(market: Market, timeframe: Timeframe, endTime: Long?, limit: Int) = emptyList<Candle>()
         override fun watchTickers(markets: List<Market>) = stream.filter { tick -> markets.any { it.key == tick.key } }
         override fun watchKlines(market: Market, timeframe: Timeframe) = emptyFlow<Candle>()
@@ -101,5 +107,157 @@ class LiveMarketRecoveryTest {
         assertEquals(setOf(other), result.missing)
         assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
         assertEquals(PriceFreshness.MISSING, repo.currentState(other)!!.freshness)
+    }
+
+    @Test fun `cancelled request retries at cooldown while observed and confirms only actual response`() = runTest {
+        val adapter = Adapter()
+        val gate = CompletableDeferred<Unit>()
+        adapter.response = { gate.await(); listOf(price(10.0)) }
+        val repo = repo(Dao(), adapter)
+        var observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        assertEquals(1, adapter.calls)
+        observer.cancelAndJoin()
+        adapter.response = { listOf(price(20.0)) }
+        observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        advanceTimeBy(59_999); runCurrent()
+        assertEquals(1, adapter.calls)
+        assertNull(repo.currentState(key))
+        advanceTimeBy(1); runCurrent()
+        assertEquals(2, adapter.calls)
+        assertEquals(20.0, repo.currentState(key)!!.ticker!!.last, 0.0)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        observer.cancelAndJoin()
+    }
+
+    @Test fun `cancelled retry delay is resumed after cooldown`() = runTest {
+        val adapter = Adapter().apply { response = { error("temporary") } }
+        val repo = repo(Dao(), adapter)
+        var observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        assertEquals(ExchangeFailureKind.TRANSIENT, repo.currentState(key)!!.failure)
+        observer.cancelAndJoin()
+        adapter.response = { listOf(price(11.0)) }
+        observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        advanceTimeBy(59_999); runCurrent()
+        assertEquals(1, adapter.calls)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(2, adapter.calls)
+        assertNull(repo.currentState(key)!!.failure)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        observer.cancelAndJoin()
+    }
+
+    @Test fun `another cancelled refresh extends pending cooldown without losing recovery`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val adapter = Adapter().apply { response = { gate.await(); listOf(price(10.0)) } }
+        val repo = repo(Dao(), adapter)
+        var observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        observer.cancelAndJoin()
+        observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        advanceTimeBy(59_000); runCurrent()
+        val external = backgroundScope.launch { repo.refreshResult(listOf(key)) }
+        runCurrent()
+        assertEquals(2, adapter.calls)
+        external.cancelAndJoin()
+        adapter.response = { listOf(price(20.0)) }
+        advanceTimeBy(1_000); runCurrent()
+        advanceTimeBy(58_999); runCurrent()
+        assertEquals(2, adapter.calls)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(3, adapter.calls)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        observer.cancelAndJoin()
+    }
+
+    @Test fun `resubscribe retains server retry deadline even beyond cooldown`() = runTest {
+        val adapter = Adapter().apply {
+            response = { throw ExchangeHttpException(id, 429, "limited", retryAfterMs = 120_000) }
+        }
+        val repo = repo(Dao(), adapter)
+        var observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        observer.cancelAndJoin()
+        adapter.response = { listOf(price(12.0)) }
+        observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        advanceTimeBy(119_999); runCurrent()
+        assertEquals(1, adapter.calls)
+        assertEquals(ExchangeFailureKind.RATE_LIMITED, repo.currentState(key)!!.failure)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(2, adapter.calls)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        observer.cancelAndJoin()
+    }
+
+    @Test fun `successful snapshot suppresses repeat at cooldown`() = runTest {
+        val adapter = Adapter().apply { response = { listOf(price(10.0)) } }
+        val repo = repo(Dao(), adapter)
+        var observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        observer.cancelAndJoin()
+        observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        advanceTimeBy(60_001); runCurrent()
+        assertEquals(1, adapter.calls)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        observer.cancelAndJoin()
+    }
+
+    @Test fun `stream confirmation during cancelled request cooldown avoids redundant REST`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val adapter = Adapter().apply { response = { gate.await(); listOf(price(10.0)) } }
+        val repo = repo(Dao(), adapter)
+        var observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        observer.cancelAndJoin()
+        observer = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        runCurrent()
+        advanceTimeBy(301); runCurrent()
+        adapter.stream.emit(price(15.0)); runCurrent()
+        advanceTimeBy(59_699); runCurrent()
+        assertEquals(1, adapter.calls)
+        assertEquals(15.0, repo.currentState(key)!!.ticker!!.last, 0.0)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        observer.cancelAndJoin()
+    }
+
+    @Test fun `overlapping observers share in flight request and one cancellation keeps it alive`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val adapter = Adapter().apply { response = { gate.await(); listOf(price(10.0)) } }
+        val repo = repo(Dao(), adapter)
+        val first = backgroundScope.launch { repo.observeTickers(setOf(key)).collect() }
+        val second = backgroundScope.launch { repo.refreshResult(listOf(key)) }
+        runCurrent()
+        assertEquals(1, adapter.calls)
+        first.cancelAndJoin()
+        gate.complete(Unit)
+        second.join()
+        assertEquals(1, adapter.calls)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+    }
+
+    @Test fun `partial batch retries failed pair without re-fetching successful pair`() = runTest {
+        val adapter = Adapter().apply {
+            batchResponse = { markets ->
+                if (calls == 1) TickerBatch(mapOf(key to price(10.0)), mapOf(other to IllegalStateException("temporary")))
+                else TickerBatch(markets.associate { it.key to Ticker(it.key, 20.0, timestamp = 100) }, emptyMap())
+            }
+        }
+        val repo = repo(Dao(), adapter)
+        val observer = backgroundScope.launch { repo.observeTickers(setOf(key, other)).collect() }
+        runCurrent()
+        assertEquals(1, adapter.calls)
+        assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+        assertEquals(ExchangeFailureKind.TRANSIENT, repo.currentState(other)!!.failure)
+        advanceTimeBy(6_001); runCurrent()
+        assertEquals(2, adapter.calls)
+        assertEquals(10.0, repo.currentState(key)!!.ticker!!.last, 0.0)
+        assertEquals(20.0, repo.currentState(other)!!.ticker!!.last, 0.0)
+        observer.cancelAndJoin()
     }
 }

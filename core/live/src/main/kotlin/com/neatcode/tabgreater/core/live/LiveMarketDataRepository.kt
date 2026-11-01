@@ -73,6 +73,7 @@ class LiveMarketDataRepository(
     private val wsTimes = mutableMapOf<MarketKey, Long>()
     private val restFlights = BatchSingleFlight<MarketKey, RefreshResult>()
     private val lastAttempt = ConcurrentHashMap<MarketKey, Long>()
+    private val retryNotBefore = ConcurrentHashMap<MarketKey, Long>()
 
     override fun currentState(key: MarketKey): MarketState? = accepted.value[key]?.aged(elapsed())
 
@@ -167,6 +168,8 @@ class LiveMarketDataRepository(
         return try {
             val batch = adapter.fetchTickerBatch(resolveMarkets(exchange, requested))
             val missing = requested - batch.values.keys - batch.failures.keys
+            // Retain the server deadline even if the consumer is cancelled waiting for writeLock.
+            batch.failures.forEach { (key, error) -> rememberRetryDeadline(key, error) }
             writeLock.withLock {
                 for ((key, ticker) in batch.values) {
                     // A response cannot displace a price confirmed since its request started.
@@ -174,13 +177,16 @@ class LiveMarketDataRepository(
                     lastRestAt[key] = elapsed()
                 }
                 for (key in missing) if ((versions[key] ?: 0L) == started[key]) markFailure(key, ExchangeFailureKind.INVALID_MARKET)
-                for ((key, error) in batch.failures) if ((versions[key] ?: 0L) == started[key])
-                    markFailure(key, error.exchangeFailureKind(), error.retryDelayMs())
+                for ((key, error) in batch.failures) {
+                    if ((versions[key] ?: 0L) == started[key])
+                        markFailure(key, error.exchangeFailureKind(), error.retryDelayMs())
+                }
             }
             persist(batch.values.values.toList())
             RefreshResult(batch.values.keys, missing, batch.failures)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
+            requested.forEach { rememberRetryDeadline(it, e) }
             writeLock.withLock {
                 requested.filter { (versions[it] ?: 0L) == started[it] }
                     .forEach { markFailure(it, e.exchangeFailureKind(), e.retryDelayMs()) }
@@ -189,26 +195,62 @@ class LiveMarketDataRepository(
         }
     }
 
+    private fun rememberRetryDeadline(key: MarketKey, error: Throwable) {
+        val duration = error.retryDelayMs().coerceIn(0, Long.MAX_VALUE / 2)
+        if (duration > 0) retryNotBefore.merge(key, elapsed() + duration) { old, new -> maxOf(old, new) }
+    }
+
+    private fun pendingCooldownAt(key: MarketKey, now: Long): Long? {
+        val last = lastAttempt[key] ?: return null
+        val state = accepted.value[key]
+        val incomplete = state?.failure in RETRYABLE_FAILURES || state?.ticker == null ||
+            (state?.confirmedAtElapsedMs ?: Long.MIN_VALUE) < last
+        return (last + REST_COOLDOWN_MS).takeIf { incomplete && it > now }
+    }
+
     /** Active consumers own recovery; a worker's one-shot refresh never waits through cooldowns. */
     private suspend fun refreshWhileObserved(keys: Set<MarketKey>) {
-        var wanted = keys.filter { needsRestSnapshot(it) }
-        var attempt = 0
+        val now = elapsed()
+        val attempts = keys.associateWith { 0 }.toMutableMap()
+        // Preserve a fresh subscription's explicit chance to recover a previous permanent error.
+        val initial = keys.filterTo(mutableSetOf()) { needsRestSnapshot(it) }
+        val next = keys.associateWith { key ->
+            when {
+                needsRestSnapshot(key) -> now
+                // An incomplete attempt needs another chance when its cooldown ends, unless a
+                // live or REST price has already been confirmed during the cooldown.
+                else -> pendingCooldownAt(key, now) ?: (now + PERIODIC_REFRESH_MS)
+            }.coerceAtLeast(retryNotBefore[key] ?: 0L)
+        }.toMutableMap()
+
         while (currentCoroutineContext().isActive) {
+            val wait = (next.values.minOrNull() ?: return) - elapsed()
+            if (wait > 0) delay(wait)
+            val current = elapsed()
+            val due = next.filter { (key, time) -> time <= current && (retryNotBefore[key] ?: 0L) <= current }.keys
+            if (due.isEmpty()) {
+                next.keys.forEach { key -> next[key] = maxOf(next.getValue(key), retryNotBefore[key] ?: 0L) }
+                continue
+            }
+            val wanted = due.filter { key ->
+                val state = currentState(key)
+                (key in initial || state?.failure !in NON_RETRYABLE_FAILURES) &&
+                    (attempts.getValue(key) > 0 || needsRestSnapshot(key))
+            }
+            initial.removeAll(due)
             val result = refreshResult(wanted)
-            val retryable = result.failures.filterValues { it.canRetryAutomatically() }
-            if (retryable.isNotEmpty() && attempt < 5) {
-                val pause = longArrayOf(5_000, 10_000, 20_000, 40_000, 60_000)[attempt++]
-                delay(maxOf(pause + kotlin.random.Random.nextLong(pause / 5 + 1), retryable.values.maxOf { it.retryDelayMs() }))
-                wanted = retryable.keys.toList()
-            } else {
-                delay(900_000)
-                attempt = 0
-                wanted = keys.filter { key ->
-                    val state = currentState(key)
-                    needsRestSnapshot(key) && state?.failure !in setOf(
-                        ExchangeFailureKind.FORBIDDEN, ExchangeFailureKind.REGION_RESTRICTED,
-                        ExchangeFailureKind.INVALID_MARKET, ExchangeFailureKind.INVALID_RESPONSE,
-                    )
+            val finished = elapsed()
+            for (key in due) {
+                val error = result.failures[key]
+                val attempt = attempts.getValue(key)
+                if (error != null && error.canRetryAutomatically() && attempt < RETRY_DELAYS_MS.size) {
+                    val pause = RETRY_DELAYS_MS[attempt]
+                    attempts[key] = attempt + 1
+                    next[key] = maxOf(finished + pause + kotlin.random.Random.nextLong(pause / 5 + 1), retryNotBefore[key] ?: 0L)
+                } else {
+                    attempts[key] = 0
+                    val nextCheck = if (key !in wanted) pendingCooldownAt(key, finished) else null
+                    next[key] = maxOf(nextCheck ?: (finished + PERIODIC_REFRESH_MS), retryNotBefore[key] ?: 0L)
                 }
             }
         }
@@ -392,6 +434,15 @@ class LiveMarketDataRepository(
 
         /** Re-subscribing within this window (tab switch, added ticker) skips the REST round for markets that are already fresh. */
         const val REST_COOLDOWN_MS = 60_000L
+        const val PERIODIC_REFRESH_MS = 900_000L
+        val RETRY_DELAYS_MS = longArrayOf(5_000, 10_000, 20_000, 40_000, 60_000)
+        val NON_RETRYABLE_FAILURES = setOf(
+            ExchangeFailureKind.FORBIDDEN, ExchangeFailureKind.REGION_RESTRICTED,
+            ExchangeFailureKind.INVALID_MARKET, ExchangeFailureKind.INVALID_RESPONSE,
+        )
+        val RETRYABLE_FAILURES = setOf(
+            ExchangeFailureKind.TRANSIENT, ExchangeFailureKind.RATE_LIMITED, ExchangeFailureKind.DEFERRED,
+        )
 
         /** Live updates hit Room at most this often, per exchange, batched. */
         const val PERSIST_INTERVAL_MS = 5_000L

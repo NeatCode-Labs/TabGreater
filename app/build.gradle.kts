@@ -23,8 +23,8 @@ android {
         applicationId = "com.neatcode.tabgreater"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 8
-        versionName = "1.2.1"
+        versionCode = 9
+        versionName = "1.2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,8 +40,8 @@ android {
         }
     }
 
-    // Two distribution tracks from one applicationId: the APKs differ only in the manifest and in
-    // BuildConfig.DISTRIBUTION, so one can replace the other on a device without losing any data.
+    // Two distribution tracks share an applicationId. Local builds use the same signing key;
+    // Google Play delivery can add installer checks, so restore Play installs through Google Play.
     flavorDimensions += "distribution"
 
     productFlavors {

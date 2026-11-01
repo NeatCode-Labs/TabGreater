@@ -136,6 +136,17 @@ class LiveTickerService : Service() {
         }
     }
 
+    // SystemUI can send USER_PRESENT from its own UID, so this protected action needs a
+    // separate exported receiver. SCREEN_ON arrives while the keyguard may still be locked.
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_USER_PRESENT) {
+                Log.d(TAG, "system broadcast ${intent.action}")
+                readEnvironment()
+            }
+        }
+    }
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
             environment.update {
@@ -205,6 +216,7 @@ class LiveTickerService : Service() {
     override fun onDestroy() {
         if (receiversRegistered) {
             unregisterReceiver(systemReceiver)
+            unregisterReceiver(userPresentReceiver)
             receiversRegistered = false
         }
         if (networkCallbackRegistered) {
@@ -329,11 +341,7 @@ class LiveTickerService : Service() {
 
     private suspend fun restLoop(keys: Set<MarketKey>, intervalMs: Long) {
         while (currentCoroutineContext().isActive) {
-            restRound(keys)
-            // New candles only land on the rounds where the top-up actually ran; repainting the
-            // sparkline band on the other rounds would re-read the cache for nothing.
-            val newCandles = refreshSparklinesIfDue(keys)
-            refreshWidgets(newCandles)
+            refreshWidgetRound(keys)
             delay(intervalMs)
         }
     }
@@ -368,11 +376,7 @@ class LiveTickerService : Service() {
         if (keys.isEmpty()) return
         tickInFlight = true
         try {
-            restRound(keys)
-            // In TICK mode this is the only thing that ever moves the widgets' sparkline band:
-            // `widgetLoop` — the sole caller that passes `true` — does not run in a tick mode.
-            val newCandles = refreshSparklinesIfDue(keys)
-            refreshWidgets(newCandles)
+            refreshWidgetRound(keys)
             // Stamped last: a round cancelled half-way must not book the 60 s suppression window,
             // or the session that cancelled it would decide it has nothing left to do.
             lastTickAt = SystemClock.elapsedRealtime()
@@ -383,9 +387,16 @@ class LiveTickerService : Service() {
 
     private suspend fun restRound(keys: Set<MarketKey>) {
         val result = runCatchingSuspend(WHAT_REST_ROUND) { marketData.refreshResult(keys) } ?: return
+        Log.d(TAG, "REST round complete=${result.complete}")
         if (result.complete) diagnostics.onRestRound(System.currentTimeMillis())
         else diagnostics.onError(WHAT_REST_ROUND, result.failures.values.firstOrNull() ?: IllegalStateException("Some markets returned no price"))
     }
+
+    private suspend fun refreshWidgetRound(keys: Set<MarketKey>) = refreshPricesBeforeSparklines(
+        refreshPrices = { restRound(keys) },
+        render = { includeSparklines -> refreshWidgets(includeSparklines) },
+        refreshSparklines = { refreshSparklinesIfDue(keys) },
+    )
 
     /**
      * REST top-up of the widgets' 24 h candle window while no kline socket is held (NEAR, SLEEP,
@@ -411,6 +422,7 @@ class LiveTickerService : Service() {
             val painted = runCatchingSuspend(WHAT_WIDGET_REFRESH) { widgets.refreshAll(includeSparklines) }
                 ?: return
             diagnostics.onWidgetRefresh(System.currentTimeMillis(), painted)
+            Log.d(TAG, "widget refresh submitted count=$painted sparklines=$includeSparklines")
         }
     }
 
@@ -432,7 +444,6 @@ class LiveTickerService : Service() {
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
-            addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_POWER_CONNECTED)
             addAction(Intent.ACTION_POWER_DISCONNECTED)
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
@@ -441,6 +452,12 @@ class LiveTickerService : Service() {
         // SCREEN_ON/OFF are only delivered to context-registered receivers — that is the whole
         // reason this service is resident.
         ContextCompat.registerReceiver(this, systemReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        ContextCompat.registerReceiver(
+            this,
+            userPresentReceiver,
+            IntentFilter(Intent.ACTION_USER_PRESENT),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
         receiversRegistered = true
     }
 
