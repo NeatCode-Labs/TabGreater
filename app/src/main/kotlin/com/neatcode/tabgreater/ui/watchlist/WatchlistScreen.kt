@@ -15,8 +15,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.material3.TextButton
-import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleStartEffect
 import com.neatcode.tabgreater.R
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.TGDimens
@@ -61,6 +60,7 @@ fun WatchlistScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var openSheet by rememberSaveable { mutableStateOf(WatchlistSheet.NONE) }
     var showManager by rememberSaveable { mutableStateOf(false) }
+    var showPriceStatus by rememberSaveable { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val reorder = rememberReorderState(
         gridState = gridState,
@@ -71,6 +71,10 @@ fun WatchlistScreen(
     val backgroundTaps = remember { MutableInteractionSource() }
 
     BackHandler(enabled = state.isSelecting) { viewModel.clearSelection() }
+    LifecycleStartEffect(viewModel) {
+        viewModel.onForeground()
+        onStopOrDispose { viewModel.onBackground() }
+    }
 
     Column(modifier.fillMaxSize().background(TG.Background)) {
         if (state.isSelecting) {
@@ -83,7 +87,9 @@ fun WatchlistScreen(
                 onDelete = viewModel::deleteSelected,
             )
         } else {
-            TGAppBar()
+            TGAppBar {
+                PriceStatusButton(state.priceRefreshStatus, onClick = { showPriceStatus = true })
+            }
         }
         WatchlistTabs(
             watchlists = state.watchlists,
@@ -99,13 +105,6 @@ fun WatchlistScreen(
             onTileSizeClick = { openSheet = WatchlistSheet.SIZE },
             onSortClick = { openSheet = WatchlistSheet.SORT },
         )
-
-        state.refreshMessage?.let { message ->
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(message, style = TGType.chip, modifier = Modifier.weight(1f))
-                TextButton(onClick = viewModel::refresh) { Text("Retry") }
-            }
-        }
 
         Box(
             Modifier
@@ -178,6 +177,16 @@ fun WatchlistScreen(
                     .padding(end = 16.dp, bottom = 16.dp),
             )
         }
+    }
+
+    if (showPriceStatus) {
+        PriceStatusSheet(
+            status = state.priceRefreshStatus,
+            issues = state.priceIssues,
+            refreshInProgress = state.refreshInProgress,
+            onRetry = viewModel::refresh,
+            onDismiss = { showPriceStatus = false },
+        )
     }
 
     if (showManager) {

@@ -194,4 +194,23 @@
     <string name="samsung_open_settings">Open app settings</string>
     <string name="action_close">Close</string>
     <!-- /F5: settings -->
+    <!-- Watchlist price status: a stable header action, with details on demand. -->
+    <string name="price_status_title">Price status</string>
+    <string name="price_status_button">Show price status</string>
+    <string name="price_status_empty">No prices to check</string>
+    <string name="price_status_current">Prices confirmed</string>
+    <string name="price_status_refreshing">Refreshing prices…</string>
+    <string name="price_status_stale">Some prices are not current</string>
+    <string name="price_status_error">Could not refresh all prices</string>
+    <string name="price_status_empty_detail">Add a pair to this watchlist to follow its price.</string>
+    <string name="price_status_current_detail">All prices in this watchlist have been confirmed recently.</string>
+    <string name="price_status_refreshing_detail">Checking for confirmed prices. Saved values remain visible.</string>
+    <string name="price_status_stale_detail">Some prices have not been confirmed recently. Saved values remain visible.</string>
+    <string name="price_status_error_detail">Confirmed and saved prices remain visible. Try again to check the affected pairs.</string>
+    <string name="price_status_affected">Affected pairs</string>
+    <string name="price_status_issue_old">Price has not been confirmed for at least ten minutes.</string>
+    <string name="price_status_issue_unconfirmed">Waiting for a confirmed price.</string>
+    <string name="price_status_issue_error">Price could not be refreshed.</string>
+    <string name="price_status_pair">%1$s · %2$s</string>
+    <string name="price_status_retry">Retry</string>
 </resources>

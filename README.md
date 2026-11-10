@@ -45,6 +45,8 @@ exchanges directly: there is no backend, no account and nothing is collected.
 - **Live prices** — WebSocket streams while the app is open on Binance,
   Gate.io, Kraken and KuCoin; MEXC has no public ticker socket, so it is polled
   over REST. A candle cache on disk keeps tiles from ever being empty.
+  A fixed header icon shows price status without moving the tiles. Tap it for
+  details and Retry; hold it for its label.
 - **Charts** — candles / hollow / OHLC / area, timeframes 1 m … 1 M, eleven
   indicators (MA, EMA, BOLL, SAR, VOL, MACD, RSI, KDJ, CCI, DMI, OBV),
   log / auto scale, fullscreen, share as PNG. You can pan back through history

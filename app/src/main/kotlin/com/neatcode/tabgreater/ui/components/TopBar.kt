@@ -40,12 +40,13 @@ import com.neatcode.tabgreater.ui.theme.TGType
 val TopBarIconSize = 24.dp
 
 /**
- * The 56 dp top bar shell: status-bar inset above it, screen background behind it, 16 dp side
+ * The 48 dp top bar shell: status-bar inset above it, screen background behind it, 16 dp side
  * margins. Every screen in the app uses it so the chrome lines up across destinations.
  */
 @Composable
 fun TGTopBar(
     modifier: Modifier = Modifier,
+    endPadding: Dp = 16.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(
@@ -54,7 +55,7 @@ fun TGTopBar(
             .background(TG.Background)
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(TGDimens.APP_BAR_DP.dp)
-            .padding(horizontal = 16.dp),
+            .padding(start = 16.dp, end = endPadding),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
@@ -62,12 +63,16 @@ fun TGTopBar(
 
 /**
  * Watchlists / Settings top bar: the brand — logo glyph plus the word mark, "Tab" in white and
- * "Greater" in the accent, like the icon's white bar over its green stem. No other controls: the
- * app has no navigation drawer, and a search icon would only duplicate the "+ Add pair" FAB.
+ * "Greater" in the accent, like the icon's white bar over its green stem. A screen can supply a
+ * trailing action without changing the height of the bar or adding controls to other screens.
  */
 @Composable
-fun TGAppBar(modifier: Modifier = Modifier) {
-    TGTopBar(modifier) {
+fun TGAppBar(modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
+    // A full-size touch target has 12 dp more inset than the tab row's 24 dp icon.
+    // Recover that inset so both visible icons share the same vertical centre line.
+    val actionEndPadding = if (action == null) 16.dp else
+        16.dp - (TGDimens.STATUS_TOUCH_DP.dp - TopBarIconSize) / 2
+    TGTopBar(modifier, endPadding = actionEndPadding) {
         Image(
             painter = painterResource(R.drawable.ic_brand_glyph),
             contentDescription = null,
@@ -84,6 +89,7 @@ fun TGAppBar(modifier: Modifier = Modifier) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        action?.invoke()
     }
 }
 

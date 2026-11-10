@@ -26,6 +26,7 @@ import com.neatcode.tabgreater.core.model.TileSize
 import com.neatcode.tabgreater.core.model.Watchlist
 import com.neatcode.tabgreater.core.model.WatchlistItem
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -76,6 +78,41 @@ class WatchlistViewModel(
 
     /** The tab the user picked; `null` until restored, and ignored when it no longer exists. */
     private val requestedId = MutableStateFlow<Long?>(null)
+
+    private var foreground = false
+    private var recoveryGeneration = 0L
+    private var recoveryJob: Job? = null
+    private val refreshUi = MutableStateFlow(RefreshUi())
+    private var lastObservedPrices: Map<MarketKey, MarketState> = emptyMap()
+
+    /** The existing subscription performs catch-up; this only bounds its initial presentation. */
+    fun onForeground() {
+        if (foreground) return
+        foreground = true
+        beginRecovery()
+    }
+
+    fun onBackground() {
+        foreground = false
+        endRecovery(recoveryGeneration)
+    }
+
+    private fun beginRecovery(): Long {
+        val generation = ++recoveryGeneration
+        recoveryJob?.cancel()
+        refreshUi.update { it.copy(recovering = foreground) }
+        if (foreground) recoveryJob = viewModelScope.launch {
+            delay(RECOVERY_GRACE_MS)
+            if (generation == recoveryGeneration) refreshUi.update { it.copy(recovering = false) }
+        }
+        return generation
+    }
+
+    private fun endRecovery(generation: Long) {
+        if (generation != recoveryGeneration) return
+        recoveryJob?.cancel()
+        refreshUi.update { it.copy(recovering = false) }
+    }
 
     /** Item ids ticked in selection mode. Held here so it survives a configuration change. */
     private val selectedIds = MutableStateFlow<Set<Long>>(emptySet())
@@ -133,11 +170,25 @@ class WatchlistViewModel(
     // same for the quote that first replaces the persisted snapshot — the stale prices the grid
     // shows while the sockets come back after an unlock.
     private val tickersFlow: Flow<Map<MarketKey, MarketState>> = keysFlow
+        .onEach { if (foreground) beginRecovery() }
         .flatMapLatest { keys ->
             if (keys.isEmpty()) {
                 flowOf(emptyMap())
             } else {
                 marketDataRepository.observeMarketState(keys)
+                    .onEach { prices ->
+                        lastObservedPrices = prices
+                        // A confirmation can have the same price and must clear a failed retry
+                        // without waiting for the tile's normal redraw interval.
+                        refreshUi.update { refresh ->
+                            if (refresh.failedAtConfirmation.isEmpty()) refresh else refresh.copy(
+                                failedAtConfirmation = refresh.failedAtConfirmation.filter { (key, failedAt) ->
+                                    val confirmedAt = prices[key]?.confirmedAtElapsedMs
+                                    confirmedAt == null || confirmedAt == failedAt
+                                },
+                            )
+                        }
+                    }
                     .throttleTiles(
                         changed = { a, b -> a.ticker?.let { x -> b.ticker?.let { redrawsTile(x, it) } } ?: (a.ticker != b.ticker) },
                         alwaysChanged = { a, b -> a.freshness != b.freshness || a.failure != b.failure },
@@ -196,13 +247,17 @@ class WatchlistViewModel(
         selectedWatchlist,
         tileInputs,
         extrasFlow,
-    ) { lists, watchlist, inputs, extras ->
+        refreshUi,
+    ) { lists, watchlist, inputs, extras, refresh ->
         val period = watchlist?.period ?: SparkPeriod.HOURS_24
         // pendingOrder is read directly instead of being combined in: every change to it also
         // re-emits orderedItemsFlow, so this block always sees the value the tiles were built
         // from — combining it separately would let the sort flip one frame before the order does.
         val sort = if (pendingOrder.value != null) SortMode.CUSTOM else watchlist?.sort ?: SortMode.CUSTOM
         val tiles = buildTiles(inputs, period, sort)
+        val issues = priceIssues(inputs, refresh)
+        val requestedKeys = inputs.items.mapTo(HashSet()) { it.key }
+        val refreshing = refresh.activeKeys.any { it in requestedKeys }
         WatchlistUiState(
             watchlists = lists,
             selectedId = watchlist?.id,
@@ -211,7 +266,16 @@ class WatchlistViewModel(
             sort = sort,
             tiles = tiles,
             liveStatus = if (inputs.tickers.values.any { it.freshness == PriceFreshness.CURRENT }) LiveStatus.LIVE else LiveStatus.CONNECTING,
-            refreshMessage = refreshMessage(inputs),
+            priceRefreshStatus = when {
+                requestedKeys.isEmpty() -> PriceRefreshStatus.EMPTY
+                issues.any { it.kind == PriceIssueKind.ERROR } -> PriceRefreshStatus.ERROR
+                refreshing && refresh.recovering -> PriceRefreshStatus.REFRESHING
+                issues.isEmpty() -> PriceRefreshStatus.CURRENT
+                refresh.recovering -> PriceRefreshStatus.REFRESHING
+                else -> PriceRefreshStatus.STALE
+            },
+            priceIssues = issues,
+            refreshInProgress = refreshing,
             shrinkZeros = extras.shrinkZeros,
             selectedIds = pruneSelection(extras.selected, tiles),
             itemCounts = extras.counts,
@@ -228,7 +292,11 @@ class WatchlistViewModel(
     /** Switches tab and remembers the choice across app restarts. */
     fun selectWatchlist(id: Long) {
         val previous = uiState.value.selectedId
-        if (previous != id) refreshJob?.cancel()
+        if (previous != id) {
+            cancelPriceRefresh()
+            refreshHistoryJob?.cancel()
+            if (foreground) beginRecovery()
+        }
         requestedId.value = id
         if (previous != id) {
             selectedIds.value = emptySet()
@@ -237,7 +305,11 @@ class WatchlistViewModel(
         viewModelScope.launch { settingsStore.setSelectedWatchlistId(id) }
     }
 
-    fun setPeriod(period: SparkPeriod) { refreshJob?.cancel(); withSelected { watchlistRepository.setPeriod(it, period) } }
+    fun setPeriod(period: SparkPeriod) {
+        cancelPriceRefresh()
+        refreshHistoryJob?.cancel()
+        withSelected { watchlistRepository.setPeriod(it, period) }
+    }
 
     fun setTileSize(size: TileSize) = withSelected { watchlistRepository.setTileSize(it, size) }
 
@@ -245,19 +317,69 @@ class WatchlistViewModel(
 
     /** One REST round for the visible markets (app foreground, pull-to-refresh). */
     private var refreshJob: Job? = null
+    private var refreshHistoryJob: Job? = null
+    private var refreshRequestGeneration = 0L
+    private var activeRefreshRecoveryGeneration: Long? = null
+
+    /** Invalidates a cancelled request before a replacement request can start. */
+    private fun cancelPriceRefresh() {
+        val job = refreshJob ?: return
+        if (!job.isActive) return
+
+        refreshRequestGeneration++
+        refreshJob = null
+        job.cancel()
+        refreshUi.update { it.copy(activeKeys = emptySet()) }
+        activeRefreshRecoveryGeneration?.let(::endRecovery)
+        activeRefreshRecoveryGeneration = null
+    }
 
     fun refresh() {
         if (refreshJob?.isActive == true) return
+        val requestId = ++refreshRequestGeneration
         refreshJob = viewModelScope.launch {
             val state = uiState.value
-            val keys = state.tiles.map { it.key }
+            val keys = state.tiles.mapTo(LinkedHashSet()) { it.key }
             if (keys.isEmpty()) return@launch
-            keys.map { it.exchange }.distinct().forEach { com.neatcode.tabgreater.core.exchange.ExchangeRequests.retry(it) }
-            marketDataRepository.refreshResult(keys)
-            try { sparklineRepository.refresh(keys, state.period) }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { Log.w(TAG, "history refresh failed", e) }
+            refreshHistoryJob?.cancel()
+            val generation = beginRecovery()
+            activeRefreshRecoveryGeneration = generation
+            refreshUi.update { it.copy(activeKeys = keys, failedAtConfirmation = it.failedAtConfirmation - keys) }
+            try {
+                keys.map { it.exchange }.distinct().forEach { com.neatcode.tabgreater.core.exchange.ExchangeRequests.retry(it) }
+                val result = marketDataRepository.refreshResult(keys)
+                if (requestId == refreshRequestGeneration) {
+                    recordRefreshFailures(result.failures.keys + result.missing)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (requestId == refreshRequestGeneration) {
+                    Log.w(TAG, "price refresh failed", e)
+                    recordRefreshFailures(keys)
+                }
+            } finally {
+                if (requestId == refreshRequestGeneration) {
+                    refreshUi.update { it.copy(activeKeys = emptySet()) }
+                    if (activeRefreshRecoveryGeneration == generation) activeRefreshRecoveryGeneration = null
+                    endRecovery(generation)
+                }
+            }
+            if (requestId != refreshRequestGeneration) return@launch
+            // Candle work must not hold the price action busy after its request has completed.
+            refreshHistoryJob = viewModelScope.launch {
+                try { sparklineRepository.refresh(keys, state.period) }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { Log.w(TAG, "history refresh failed", e) }
+            }
         }
+    }
+
+    private fun recordRefreshFailures(keys: Set<MarketKey>) {
+        val confirmations = keys.associateWith {
+            (marketDataRepository.currentState(it) ?: lastObservedPrices[it])?.confirmedAtElapsedMs
+        }
+        refreshUi.update { it.copy(failedAtConfirmation = it.failedAtConfirmation + confirmations) }
     }
 
     // ---- Selection mode --------------------------------------------------------------------
@@ -396,6 +518,7 @@ class WatchlistViewModel(
     private companion object {
         /** Keeps the sockets alive across a configuration change instead of tearing them down. */
         const val STOP_TIMEOUT_MS = 5_000L
+        const val RECOVERY_GRACE_MS = 5_000L
         private const val TAG = "WatchlistVM"
 
         /** Used when the instrument list has not been fetched yet, so tiles still show a price. */
@@ -419,15 +542,24 @@ private data class TileInputs(
 )
 
 
-private fun refreshMessage(inputs: TileInputs): String? {
-    if (inputs.items.isEmpty()) return null
-    val states = inputs.items.mapNotNull { inputs.tickers[it.key] }
-    val failures = states.count { it.failure != null }
-    return when {
-        failures > 0 && failures < inputs.items.size -> "Some pairs could not refresh. Saved prices remain available."
-        failures > 0 -> "Refresh is unavailable. Saved prices remain available."
-        states.any { it.freshness == PriceFreshness.OLD } -> "Some prices have not updated recently."
-        states.isEmpty() || states.all { it.freshness == PriceFreshness.CACHED || it.freshness == PriceFreshness.MISSING } -> "Waiting for confirmed prices."
-        else -> null
+private data class RefreshUi(
+    val recovering: Boolean = false,
+    val activeKeys: Set<MarketKey> = emptySet(),
+    // Keep an explicit failed retry visible until that price is confirmed again or retried.
+    val failedAtConfirmation: Map<MarketKey, Long?> = emptyMap(),
+)
+
+private fun priceIssues(inputs: TileInputs, refresh: RefreshUi): List<PriceRefreshIssue> =
+    inputs.items.distinctBy { it.key }.mapNotNull { item ->
+        val state = inputs.tickers[item.key]
+        val failedRetry = refresh.failedAtConfirmation.containsKey(item.key) &&
+            (state?.confirmedAtElapsedMs == null ||
+                state.confirmedAtElapsedMs == refresh.failedAtConfirmation[item.key])
+        val kind = when {
+            state?.failure != null || failedRetry -> PriceIssueKind.ERROR
+            state?.freshness == PriceFreshness.OLD -> PriceIssueKind.OLD
+            state?.freshness != PriceFreshness.CURRENT -> PriceIssueKind.UNCONFIRMED
+            else -> return@mapNotNull null
+        }
+        PriceRefreshIssue(item.key, kind)
     }
-}

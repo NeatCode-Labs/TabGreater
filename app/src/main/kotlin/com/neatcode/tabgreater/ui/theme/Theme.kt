@@ -31,6 +31,7 @@ object TG {
     val NavPill = Color(TGColors.NAV_PILL)
     val Up = Color(TGColors.UP)
     val Down = Color(TGColors.DOWN)
+    val Warning = Color(TGColors.WARNING)
 }
 
 /** `includeFontPadding = false` everywhere: this vertical rhythm is too tight for legacy font padding. */

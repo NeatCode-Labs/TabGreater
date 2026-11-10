@@ -30,6 +30,8 @@ object TGColors {
     const val UP = 0xFF60A86BL
     /** Negative % and sparkline. */
     const val DOWN = 0xFFF34142L
+    /** A price is saved or old, without a confirmed refresh failure. */
+    const val WARNING = 0xFFFCCD0BL
 
     // Chart screen
     const val CANDLE_UP = 0xFF6FA26FL
@@ -81,6 +83,8 @@ object TGDimens {
     const val SPARK_STROKE_DP = 1.5f
     const val SPARK_FILL_ALPHA = 0.22f
     const val APP_BAR_DP = 48
+    const val STATUS_TOUCH_DP = 48
+    const val STATUS_ICON_DP = 22
     const val TAB_ROW_DP = 48
     const val CHIP_ROW_DP = 36
     const val CHIP_H_DP = 20

@@ -1,0 +1,3 @@
+• Price status now stays in the header, so messages no longer move your watchlist cards.
+• Tap the status icon for details and Retry, or hold it for a label.
+• Show a brief recovery state while prices refresh after returning to the app.
