@@ -5,6 +5,7 @@ import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
+
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CoroutineScope
@@ -76,24 +77,11 @@ class KuCoinAdapterRestTest {
     }
 
     @Test
-    fun `listMarkets tags the Stocks market and the stray SpaceX xStock`() = runTest {
+    fun `tokenized products are browsable as spot alongside other symbols`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(STOCK_SYMBOLS).build())
-
-        val markets = adapter.listMarkets().associateBy { it.nativeSymbol }
-
-        val tsla = markets.getValue("TSLAX-USDT")
-        assertEquals(AssetClass.STOCK, tsla.assetClass)
-        assertEquals("TSLA", tsla.underlying)
-        assertEquals(MarketKey.of(ExchangeId.KUCOIN, "TSLAX", "USDT"), tsla.key)
-        // Filed under "USDS", but an xStock all the same.
-        val spaceX = markets.getValue("SPCXX-USDT")
-        assertEquals(AssetClass.STOCK, spaceX.assetClass)
-        assertEquals("SPCX", spaceX.underlying)
-        // An X suffix alone is no marker.
-        for (symbol in listOf("AVAX-USDT", "TRX-USDT", "WMTX-USDT", "NOMARKET-USDT")) {
-            assertEquals(symbol, AssetClass.CRYPTO, markets.getValue(symbol).assetClass)
-            assertNull(symbol, markets.getValue(symbol).underlying)
-        }
+        val markets = adapter.listMarkets()
+        assertTrue(markets.any { it.nativeSymbol == "FUND-USDT" })
+        assertTrue(markets.all { it.instrumentKind == com.neatcode.tabgreater.core.model.InstrumentKind.SPOT })
     }
 
     @Test
@@ -333,27 +321,29 @@ class KuCoinAdapterRestTest {
         {"code":"200000","data":[
           {"symbol":"BTC-USDT","name":"BTC-USDT","baseCurrency":"BTC","quoteCurrency":"USDT","feeCurrency":"USDT",
            "market":"USDS","baseIncrement":"0.00000001","quoteIncrement":"0.000001","priceIncrement":"0.1",
-           "priceLimitRate":"0.1","isMarginEnabled":true,"enableTrading":true,"st":false},
+           "priceLimitRate":"0.1","isMarginEnabled":true,"enableTrading":true,"assetClass":"CRYPTO","st":false},
           {"symbol":"AVA-USDT","baseCurrency":"AVA","quoteCurrency":"USDT","priceIncrement":"0.0001",
-           "enableTrading":true},
+           "enableTrading":true,"assetClass":"CRYPTO"},
           {"symbol":"KCS-BTC","baseCurrency":"KCS","quoteCurrency":"BTC","priceIncrement":"0.000000001",
-           "enableTrading":true},
+           "enableTrading":true,"assetClass":"CRYPTO"},
           {"symbol":"PEPE-USDT","baseCurrency":"PEPE","quoteCurrency":"USDT","priceIncrement":"1",
-           "enableTrading":true},
+           "enableTrading":true,"assetClass":"CRYPTO"},
           {"symbol":"HALT-USDT","baseCurrency":"HALT","quoteCurrency":"USDT","priceIncrement":"0.01",
-           "enableTrading":false},
+           "enableTrading":false,"assetClass":"CRYPTO"},
           {"symbol":"WE.IRD-USDT","baseCurrency":"WE.IRD","quoteCurrency":"USDT","priceIncrement":"0.01",
-           "enableTrading":true},
-          {"symbol":"NOI-USDT","baseCurrency":"NOI","quoteCurrency":"USDT","enableTrading":true}
+           "enableTrading":true,"assetClass":"CRYPTO"},
+          {"symbol":"NOI-USDT","baseCurrency":"NOI","quoteCurrency":"USDT","enableTrading":true,"assetClass":"CRYPTO"}
         ]}
         """
 
         const val STOCK_SYMBOLS = """
         {"code":"200000","data":[
           {"symbol":"TSLAX-USDT","name":"TSLAX-USDT","baseCurrency":"TSLAX","quoteCurrency":"USDT","feeCurrency":"USDT",
-           "market":"Stocks","priceIncrement":"0.01","enableTrading":true,"feeCategory":2},
+           "market":"Stocks","priceIncrement":"0.01","enableTrading":true,"assetClass":"STOCK","subMarketType":"STOCK","feeCategory":2},
           {"symbol":"SPCXX-USDT","baseCurrency":"SPCXX","quoteCurrency":"USDT","market":"USDS","priceIncrement":"0.01",
-           "enableTrading":true},
+           "enableTrading":true,"assetClass":"CRYPTO"},
+          {"symbol":"FUND-USDT","baseCurrency":"FUND","quoteCurrency":"USDT","market":"Stocks","priceIncrement":"0.01",
+           "enableTrading":true,"assetClass":"STOCK","subMarketType":"ETF"},
           {"symbol":"AVAX-USDT","baseCurrency":"AVAX","quoteCurrency":"USDT","market":"USDS","priceIncrement":"0.001",
            "enableTrading":true},
           {"symbol":"TRX-USDT","baseCurrency":"TRX","quoteCurrency":"USDT","market":"USDS","priceIncrement":"0.0001",

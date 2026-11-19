@@ -84,10 +84,18 @@ object ExchangeRequests {
         client: OkHttpClient,
         request: Request,
         errorFor: (Response, String) -> Exception,
+    ): ExchangeResponse = execute(exchange, client, request, "", errorFor)
+
+    /** A public POST endpoint may return different market data for each request body. */
+    suspend fun execute(
+        exchange: ExchangeId,
+        client: OkHttpClient,
+        request: Request,
+        publicPayloadKey: String,
+        errorFor: (Response, String) -> Exception,
     ): ExchangeResponse {
         val policy = policy(client)
-        val requestKey = "${exchange.id}:${request.method}:${request.url}"
-        // POST token requests are safe to share here: each has the same empty public body.
+        val requestKey = "${exchange.id}:${request.method}:${request.url}\n$publicPayloadKey"
         return policy.requests.run(requestKey) {
             synchronized(policy) { policy.refusedRequests[requestKey] }?.let { kind ->
                 throw ExchangeHttpException(exchange, if (kind == ExchangeFailureKind.FORBIDDEN) 403 else 451,

@@ -8,8 +8,7 @@ import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
-import com.neatcode.tabgreater.core.exchange.StockTokens
-import com.neatcode.tabgreater.core.exchange.classified
+import com.neatcode.tabgreater.core.exchange.MarketSnapshot
 import com.neatcode.tabgreater.core.exchange.ohlc.CandleAggregator
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.exchange.ws.ExchangeSocket
@@ -106,44 +105,51 @@ class KrakenAdapter(
 
     // ---------------------------------------------------------------- REST
 
-    override suspend fun listMarkets(): List<Market> = withContext(Dispatchers.IO) {
+    override suspend fun listMarkets(): List<Market> = listMarketSnapshot().markets
+
+    override suspend fun listMarketSnapshot(): MarketSnapshot = withContext(Dispatchers.IO) {
         val result = getResult(PATH_ASSET_PAIRS)
         val currency = json.decodeFromJsonElement<Map<String, AssetPairDto>>(result)
             .mapNotNull { (nativeSymbol, dto) -> dto.toMarket(nativeSymbol) }
         // The key is the stored row's identity: should a share ever collide with a coin, the coin keeps it.
         val taken = currency.mapTo(HashSet()) { it.key }
-        currency + listStockMarkets().filter { it.key !in taken }
+        val tokenized = listStockMarkets()
+        MarketSnapshot(
+            markets = currency + tokenized.markets.filter { it.key !in taken },
+            isComplete = tokenized.isComplete,
+        )
     }
 
-    /**
-     * The tokenized catalogue: a second request, made only after the crypto one succeeded.
-     *
-     * Only Kraken *refusing* the class costs just the stocks, and the crypto markets are returned on
-     * their own: HTTP 451 ([ExchangeUnavailableException], not offered in this region), or a
-     * well-formed body whose every `E` error is in [REFUSALS] — `EGeneral:Invalid arguments` is the
-     * live answer to an asset class Kraken does not offer. Every other failure propagates, so the
-     * repository keeps its stored rows and retries on the next refresh: an `IOException`, an
-     * [ExchangeHttpException] carrying any other non-2xx status (429 included), a body that is not
-     * Kraken's envelope, and every other `E` error — the throttle (`EGeneral:Too many requests`) and
-     * the outages Kraken documents as retryable (`EService:Unavailable`, `EGeneral:Internal error`)
-     * arrive with HTTP 200 too. None of those says the class is gone, and answering without it would
-     * delete every Kraken stock row.
-     */
-    private suspend fun listStockMarkets(): List<Market> {
-        val (code, body) = try {
+    /** A failed subcatalogue yields a partial snapshot, so sync can retain its stored tokenized rows. */
+    private suspend fun listStockMarkets(): MarketSnapshot {
+        val response = try {
             get(PATH_ASSET_PAIRS, listOf(PARAM_ACLASS_BASE to ASSET_CLASS_TOKENIZED))
         } catch (e: ExchangeUnavailableException) {
-            logger("kraken: tokenized catalogue refused (${e.message}), crypto markets only")
-            return emptyList()
+            logger("kraken: tokenized catalogue unavailable (${e.message}); snapshot is incomplete")
+            return MarketSnapshot(emptyList(), isComplete = false)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger("kraken: tokenized catalogue failed ${e::class.java.simpleName}: ${e.message}; snapshot is incomplete")
+            return MarketSnapshot(emptyList(), isComplete = false)
         }
+        val (code, body) = response
         val envelope = envelope(PATH_ASSET_PAIRS, code, body)
         val result = envelope.clean ?: run {
-            if (!envelope.isOnly(REFUSALS)) throw krakenError(code, envelope.detail)
-            logger("kraken: tokenized catalogue refused (${envelope.detail}), crypto markets only")
-            return emptyList()
+            logger("kraken: tokenized catalogue incomplete (${envelope.detail})")
+            return MarketSnapshot(emptyList(), isComplete = false)
         }
-        return json.decodeFromJsonElement<Map<String, AssetPairDto>>(result)
-            .mapNotNull { (nativeSymbol, dto) -> dto.toStockMarket(nativeSymbol) }
+        return try {
+            MarketSnapshot(
+                json.decodeFromJsonElement<Map<String, AssetPairDto>>(result)
+                    .mapNotNull { (nativeSymbol, dto) -> dto.toStockMarket(nativeSymbol) },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger("kraken: tokenized catalogue could not be decoded; snapshot is incomplete")
+            MarketSnapshot(emptyList(), isComplete = false)
+        }
     }
 
     /**
@@ -289,7 +295,9 @@ class KrakenAdapter(
         if (status != STATUS_ONLINE && status != STATUS_POST_ONLY) return null
         if (nativeSymbol != altname) return null
         val (base, quote) = assets() ?: return null
-        return market(nativeSymbol, base, quote).classified(StockTokens.kraken(base))
+        return market(nativeSymbol, base, quote).copy(
+            assetClass = AssetClass.STOCK,
+        )
     }
 
     /** Base and quote from `wsname`, aliases applied, or `null` when either is unusable. */

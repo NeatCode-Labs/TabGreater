@@ -56,7 +56,9 @@ internal fun tileNumbers(period: SparkPeriod, ticker: Ticker?, spark: Sparkline?
 internal fun absChangeText(absChange: Double?, changePct: Double?, precision: Int): String? {
     if (absChange == null || changePct == null || !changePct.isFinite()) return null
     val signed = PriceFormat.formatSignedAbs(absChange, precision)
-    if (signed == PriceFormat.NO_VALUE) return null
+    // A rounded zero has no direction, even when the source can report a signed percentage.
+    // Leave the change row to the percentage alone in that case.
+    if (!signed.startsWith('+') && !signed.startsWith('-')) return null
     return "$signed (${PriceFormat.formatPrice(abs(changePct), CHANGE_DECIMALS)}%)"
 }
 

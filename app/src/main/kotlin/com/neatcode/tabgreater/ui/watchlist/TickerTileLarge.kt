@@ -64,7 +64,7 @@ internal fun LargeTile(
                             .padding(top = TILE_TOP_DP.dp),
                     )
                     Column(
-                        modifier = Modifier.padding(top = TGDimens.TILE_PRICE_TOP_DP.dp),
+                        modifier = Modifier.weight(1f).padding(top = TGDimens.TILE_PRICE_TOP_DP.dp),
                         horizontalAlignment = Alignment.End,
                     ) {
                         TilePriceLines(tile, trend, shrinkZeros)
@@ -87,6 +87,7 @@ internal fun LargeTile(
 
             TileDetails(
                 tile = tile,
+                shrinkZeros = shrinkZeros,
                 modifier = Modifier
                     .align(Alignment.End)
                     .padding(end = TILE_PADDING_DP.dp, bottom = TGDimens.TILE_DETAIL_BOTTOM_DP.dp),

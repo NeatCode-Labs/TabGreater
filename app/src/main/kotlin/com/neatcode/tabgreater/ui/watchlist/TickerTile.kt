@@ -1,37 +1,19 @@
 package com.neatcode.tabgreater.ui.watchlist
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.BaselineShift
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -40,8 +22,6 @@ import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.TGDimens
 import com.neatcode.tabgreater.core.model.TileSize
-import com.neatcode.tabgreater.ui.components.ExchangeGlyph
-import com.neatcode.tabgreater.ui.components.Sparkline
 import com.neatcode.tabgreater.ui.theme.TG
 import com.neatcode.tabgreater.ui.theme.TGType
 
@@ -89,75 +69,21 @@ private fun SmallTile(
     shrinkZeros: Boolean = true,
 ) {
     val trend = if (tile.isUp) TG.Up else TG.Down
-    val largeText = LocalDensity.current.fontScale > 1.3f
     TileSurface(
         modifier = modifier,
         aspectRatio = TGDimens.TILE_ASPECT_SMALL,
         selected = selected,
         growable = true,
+        propagateMinConstraints = true,
     ) {
         Box(Modifier.matchParentSize()) { TileAccentStripe(tile.accent) }
-
-        if (!largeText) Sparkline(
-            values = tile.spark,
-            color = trend,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 2.dp, end = 8.dp)
-                .size(width = TGDimens.SPARK_W_DP.dp, height = TGDimens.SPARK_H_DP.dp),
-        )
-
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .tileRowHeight(TGDimens.TILE_ASPECT_SMALL)
-                .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = listOfNotNull(tile.exchangeLabel, tile.statusLabel).joinToString(" · "),
-                    style = TGType.exchange,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                ExchangeGlyph(tile.key.exchange, size = 10.dp)
-            }
-            Text(
-                text = tile.pair,
-                style = TGType.pair,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                // Stop before the sparkline box (61 dp + 8 dp end inset) so long pairs ellipsise.
-                modifier = Modifier.padding(end = if (largeText) 0.dp else (TGDimens.SPARK_W_DP + 4).dp),
-            )
-
-            if (largeText) Sparkline(
-                values = tile.spark,
-                color = trend,
-                modifier = Modifier.fillMaxWidth().height(TGDimens.SPARK_H_DP.dp),
-            )
-
+        Column(Modifier.tileRowHeight(TGDimens.TILE_ASPECT_SMALL).padding(bottom = 4.dp)) {
+            HalfWidthTileHeader(tile, contextStyle = TGType.subLabel)
             Spacer(Modifier.weight(1f))
-
-            Text(
-                text = shrunkPrice(tile.priceText, shrinkZeros),
-                style = TGType.price,
-                maxLines = 1,
-                textAlign = TextAlign.End,
-                modifier = Modifier.align(Alignment.End),
-            )
-            Text(
-                text = tile.changeText ?: PriceFormat.NO_VALUE,
-                style = TGType.change,
-                color = trend,
-                maxLines = 1,
-                textAlign = TextAlign.End,
-                modifier = Modifier.align(Alignment.End),
-            )
+            Column(Modifier.fillMaxWidth().padding(horizontal = TILE_PADDING_DP.dp)) {
+                TileMainPrice(tile, shrinkZeros)
+                TileChange(tile, trend, shrinkZeros, showAmount = false)
+            }
         }
     }
 }

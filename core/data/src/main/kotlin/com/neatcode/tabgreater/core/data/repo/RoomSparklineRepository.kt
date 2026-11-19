@@ -114,13 +114,14 @@ class RoomSparklineRepository(
                 if (resolved == null) delay(RETRY_MS)
             }
             val market = resolved ?: return@launch
+            if (!market.active) return@launch
             val newest = session.window.lastOrNull()?.openTime
             if (session.history != HistoryState.VERIFIED || newest == null || epoch() - newest >= 2 * key.period.timeframe.millis)
-                requestRecovery(session, adapter, market)
+                requestRecovery(session, adapter)
             launch {
                 while (isActive) {
                     delay(SparklineRepository.REFRESH_INTERVAL_MS)
-                    requestRecovery(session, adapter, market)
+                    requestRecovery(session, adapter)
                 }
             }
             var attempts = 0
@@ -140,7 +141,7 @@ class RoomSparklineRepository(
                             publish(session)
                             persist(session, listOf(candle))
                         }
-                        if (gap) requestRecovery(session, adapter, market)
+                        if (gap) requestRecovery(session, adapter)
                         attempts = 0
                     }
                 } catch (e: CancellationException) { throw e }
@@ -150,17 +151,17 @@ class RoomSparklineRepository(
         }
     }
 
-    private fun requestRecovery(session: Session, adapter: ExchangeAdapter, market: Market) {
+    private fun requestRecovery(session: Session, adapter: ExchangeAdapter) {
         synchronized(session) {
             if (session.recovery?.isActive == true || elapsed() < session.nextRecoveryAt) return
-            session.recovery = session.scope.launch { recover(session, adapter, market) }
+            session.recovery = session.scope.launch { recover(session, adapter) }
         }
     }
 
-    private suspend fun recover(session: Session, adapter: ExchangeAdapter, market: Market) {
+    private suspend fun recover(session: Session, adapter: ExchangeAdapter) {
         var attempt = 0
         while (currentCoroutineContext().isActive) {
-            try { refreshSession(session, adapter, market); return }
+            try { refreshSession(session, adapter); return }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (!e.canRetryAutomatically() || attempt >= 5) {
@@ -183,7 +184,8 @@ class RoomSparklineRepository(
                     markets.refreshMarkets(key.exchange).getOrThrow()
                     markets.getMarket(key)
                 } ?: throw ExchangeHttpException(key.exchange, 404, "Market is no longer available")
-                refreshSession(session, adapter, market)
+                if (!market.active) continue
+                refreshSession(session, adapter)
             }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) {
@@ -195,12 +197,14 @@ class RoomSparklineRepository(
         if (failures.isNotEmpty()) throw failures.first()
     }
 
-    private suspend fun refreshSession(session: Session, adapter: ExchangeAdapter, market: Market): Boolean =
+    private suspend fun refreshSession(session: Session, adapter: ExchangeAdapter): Boolean =
         session.flights.run(Unit) {
             val key = session.key
+            val currentMarket = markets.getMarket(key.market) ?: return@run false
+            if (!currentMarket.active) return@run false
             val started = session.lock.withLock { session.version }
             try {
-                val fetched = adapter.fetchOHLCV(market, key.period.timeframe, null, key.period.candles + 1)
+                val fetched = adapter.fetchOHLCV(currentMarket, key.period.timeframe, null, key.period.candles + 1)
                     .filter(::valid).distinctBy { it.openTime }.sortedBy { it.openTime }
                 session.lock.withLock {
                     val accepted = fetched.filter { (session.revisions[it.openTime] ?: 0) <= started }

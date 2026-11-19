@@ -1,6 +1,8 @@
 package com.neatcode.tabgreater.widget
 
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.core.model.InstrumentKind
+import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.TGColors
 import com.neatcode.tabgreater.core.model.Ticker
@@ -16,7 +18,7 @@ class WidgetRenderModelTest {
     fun `price uses the market precision and en-US grouping`() {
         val model = build(ticker(last = 65_609.7031), precision = 2)
 
-        assertEquals("65,609.70", model.price)
+        assertEquals("65,609.7", model.price)
         assertTrue(model.hasData)
     }
 
@@ -92,6 +94,95 @@ class WidgetRenderModelTest {
         assertEquals("BTC/EUR", model.pair)
         assertEquals("kraken:BTC/EUR", model.key)
         assertEquals(MarketKey("kraken:BTC/EUR"), model.marketKey)
+    }
+
+    @Test
+    fun `previously saved widget keeps its instrument details on the first redraw`() {
+        val model = build(ticker())
+        val details = "Perpetual · xyz · USD per contract unit"
+        assertEquals(details, model.copy(marketContext = "Unclassified · $details").contextForDisplay())
+        assertEquals(details, model.copy(marketContext = details).contextForDisplay())
+        assertEquals("Spot", model.copy(marketContext = "Stocks · Spot").contextForDisplay())
+    }
+
+    @Test
+    fun `market display name and event context reach the widget model`() {
+        val market = Market(
+            key = MarketKey("hyperliquid:OUTCOME_37275_YES/USDC"),
+            nativeSymbol = "#372750",
+            pricePrecision = 3,
+            instrumentKind = InstrumentKind.OUTCOME,
+            displayName = "Will Team A win? · Yes",
+            outcomeSide = "Yes",
+            venue = "Sports",
+            unit = "probability",
+            expiresAt = NOW + 60_000,
+        )
+        val model = WidgetModelFactory.build(
+            config = WidgetConfig(market.key),
+            ticker = ticker(),
+            pricePrecision = market.pricePrecision,
+            spark = emptyList(),
+            now = NOW,
+            market = market,
+        )
+
+        assertTrue(model.pair.startsWith("Yes · Will Team A win?"))
+        assertTrue(model.marketContext.startsWith("Outcome · Yes"))
+        assertTrue(model.marketContext.contains("Sports"))
+        assertTrue(model.marketContext.contains("probability"))
+        assertTrue(model.marketContext.contains("Deadline"))
+        assertTrue(model.pair.endsWith(" · probability"))
+        val decoded = WidgetJson.format.decodeFromString<WidgetRenderModel>(
+            WidgetJson.format.encodeToString(model),
+        )
+        assertEquals(model, decoded)
+    }
+
+    @Test
+    fun `widget outcomes put the side first and compact market units`() {
+        val market = Market(
+            key = MarketKey("hyperliquid:OUTCOME_37275_NO/USDC"),
+            nativeSymbol = "#372751",
+            pricePrecision = 4,
+            instrumentKind = InstrumentKind.OUTCOME,
+            displayName = "Will Team A win the championship? · No",
+            outcomeSide = "No",
+            unit = "USDC per outcome token",
+        )
+        val model = WidgetModelFactory.build(
+            config = WidgetConfig(market.key),
+            ticker = ticker(last = 0.5),
+            pricePrecision = market.pricePrecision,
+            spark = emptyList(),
+            now = NOW,
+            market = market,
+        )
+
+        assertEquals("No · Will Team A win the championship? · USDC", model.pair)
+        assertEquals("0.5", model.price)
+    }
+
+    @Test
+    fun `widget keeps the participant beside its side for contest outcomes`() {
+        val market = Market(
+            key = MarketKey("hyperliquid:OUTCOME_37275_YES/USDC"),
+            nativeSymbol = "#372750",
+            pricePrecision = 4,
+            instrumentKind = InstrumentKind.OUTCOME,
+            displayName = "2026/2027 NBA winner · Oklahoma City Thunder · Yes",
+            outcomeSide = "Yes",
+        )
+        val model = WidgetModelFactory.build(
+            config = WidgetConfig(market.key),
+            ticker = ticker(last = 0.5),
+            pricePrecision = market.pricePrecision,
+            spark = emptyList(),
+            now = NOW,
+            market = market,
+        )
+
+        assertEquals("Yes · OKC Thunder", model.pair)
     }
 
     @Test

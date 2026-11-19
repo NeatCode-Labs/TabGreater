@@ -6,6 +6,7 @@ import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
+
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CoroutineScope
@@ -71,26 +72,11 @@ class MexcAdapterRestTest {
     }
 
     @Test
-    fun `listMarkets tags tokenized stocks by plate or name, never by meme plates or suffixes`() = runTest {
+    fun `retains tokenized listings in the spot universe`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(STOCK_EXCHANGE_INFO).build())
-
-        val markets = adapter.listMarkets().associateBy { it.nativeSymbol }
-
-        val expected = mapOf(
-            "TSLAXUSDT" to "TSLA",
-            "AAPLONUSDT" to "AAPL",
-            // No plate: the Ondo name gives it away.
-            "SOXLONUSDT" to "SOXL",
-        )
-        for ((symbol, underlying) in expected) {
-            assertEquals(symbol, AssetClass.STOCK, markets.getValue(symbol).assetClass)
-            assertEquals(symbol, underlying, markets.getValue(symbol).underlying)
-        }
-        assertEquals(MarketKey("mexc:TSLAX/USDT"), markets.getValue("TSLAXUSDT").key)
-        for (symbol in listOf("STONKSUSDT", "NEONUSDT", "ELONUSDT", "NULLSUSDT")) {
-            assertEquals(symbol, AssetClass.CRYPTO, markets.getValue(symbol).assetClass)
-            assertNull(symbol, markets.getValue(symbol).underlying)
-        }
+        val market = adapter.listMarkets().first { it.nativeSymbol == "TSLAXUSDT" }
+        assertEquals(MarketKey("mexc:TSLAX/USDT"), market.key)
+        assertEquals(com.neatcode.tabgreater.core.model.InstrumentKind.SPOT, market.instrumentKind)
     }
 
     @Test

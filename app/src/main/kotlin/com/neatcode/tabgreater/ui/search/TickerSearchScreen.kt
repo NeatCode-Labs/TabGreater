@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -18,7 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldDecorator
@@ -31,32 +30,32 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.neatcode.tabgreater.R
-import com.neatcode.tabgreater.core.model.AssetClass
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.Market
+import com.neatcode.tabgreater.ui.contextLabel
+import com.neatcode.tabgreater.ui.displayLabel
 import com.neatcode.tabgreater.ui.components.ExchangeGlyph
 import com.neatcode.tabgreater.ui.components.TGIconButton
 import com.neatcode.tabgreater.ui.components.TGPillButton
@@ -65,14 +64,15 @@ import com.neatcode.tabgreater.ui.theme.TG
 import com.neatcode.tabgreater.ui.theme.TGType
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * "+ Ticker": multi-select market search across every supported exchange. Instrument lists are
  * refreshed on entry (thin accent progress bar while that runs) and the picked markets are appended
  * to the watchlist by the "Add N" pill.
  *
- * The "Crypto | Stocks" scope row, the chips and the Stocks caption sit above the results and
- * never scroll with them; only the results area gives way to the keyboard.
+ * Type and source filters apply to the whole market catalogue, including events.
  */
 @Composable
 fun TickerSearchScreen(
@@ -83,6 +83,7 @@ fun TickerSearchScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val textFieldState = rememberTextFieldState()
+    val resultsListState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -96,6 +97,25 @@ fun TickerSearchScreen(
             onBack()
         }
     }
+    LaunchedEffect(state.query, state.instrumentKind, state.source) {
+        resultsListState.scrollToItem(0)
+    }
+    LaunchedEffect(
+        resultsListState,
+        state.results.size,
+        state.hasMore,
+        state.loadingMore,
+        state.pageError,
+    ) {
+        snapshotFlow {
+            val layout = resultsListState.layoutInfo
+            val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+            !state.loadingMore && !state.pageError && state.hasMore &&
+                layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - PREFETCH_DISTANCE
+        }.distinctUntilChanged().collect { nearEnd ->
+            if (nearEnd) viewModel.loadNextPage()
+        }
+    }
 
     Column(modifier.fillMaxSize().background(TG.Background)) {
         TGTopBar {
@@ -107,13 +127,7 @@ fun TickerSearchScreen(
             Spacer(Modifier.width(16.dp))
             SearchField(
                 state = textFieldState,
-                placeholder = stringResource(
-                    if (state.scope == AssetClass.STOCK) {
-                        R.string.search_scope_stocks_placeholder
-                    } else {
-                        R.string.search_placeholder
-                    },
-                ),
+                placeholder = stringResource(R.string.search_placeholder),
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
             )
         }
@@ -129,19 +143,20 @@ fun TickerSearchScreen(
             Spacer(Modifier.height(2.dp))
         }
 
-        SearchScopeRow(scope = state.scope, onScopeChange = viewModel::onScopeChange)
+        SearchMarketFilterRow(
+            kind = state.instrumentKind,
+            source = state.source,
+            onKindSelected = viewModel::onInstrumentKindChange,
+            onSourceSelected = viewModel::onSourceChange,
+        )
 
         // Quick-add chips only make sense as a starting point; once the user types they are noise.
-        if (state.query.isEmpty()) {
-            // Keyed so each scope's row starts scrolled to its first chip.
-            key(state.scope) {
-                PopularPairsRow(
-                    pairs = if (state.scope == AssetClass.STOCK) state.popularStocks else state.popularPairs,
-                    onPairClick = { pair -> textFieldState.setTextAndPlaceCursorAtEnd(pair) },
-                )
-            }
+        if (state.query.isEmpty() && state.instrumentKind == null && state.source == null) {
+            PopularPairsRow(
+                pairs = state.popularPairs,
+                onPairClick = { pair -> textFieldState.setTextAndPlaceCursorAtEnd(pair) },
+            )
         }
-        if (state.scope == AssetClass.STOCK) StockScopeCaption()
 
         Box(
             Modifier
@@ -151,27 +166,49 @@ fun TickerSearchScreen(
                 .navigationBarsPadding(),
         ) {
             if (state.results.isEmpty()) {
-                // While a tapped scope's search runs the area stays blank for that moment.
                 if (!state.pending) {
-                    EmptyResults(
-                        state = state,
-                        onShowOtherScope = { viewModel.onScopeChange(state.otherScope) },
+                    Column(
                         modifier = Modifier.align(Alignment.Center),
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        EmptyResults(state = state)
+                        if (state.pageError) {
+                            TextButton(onClick = viewModel::retrySearch) {
+                                Text(stringResource(R.string.search_retry))
+                            }
+                        }
+                    }
                 }
             } else {
-                // A new scope is a different list: start it at the top, not at the old offset.
-                key(state.scope) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 72.dp),
-                    ) {
-                        items(state.results, key = { it.key.value }) { market ->
-                            MarketRow(
-                                market = market,
-                                selected = market.key in state.selected,
-                                onClick = { viewModel.toggle(market.key) },
+                LazyColumn(
+                    state = resultsListState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 72.dp),
+                ) {
+                    items(state.results, key = { it.key.value }) { market ->
+                        MarketRow(
+                            market = market,
+                            selected = market.key in state.selected,
+                            onClick = { viewModel.toggle(market.key) },
+                        )
+                    }
+                    if (state.loadingMore) {
+                        item(key = PAGE_LOADING_KEY) {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(2.dp),
+                                color = TG.Accent,
+                                trackColor = Color.Transparent,
+                                gapSize = 0.dp,
                             )
+                        }
+                    } else if (state.pageError) {
+                        item(key = PAGE_RETRY_KEY) {
+                            TextButton(
+                                onClick = viewModel::retrySearch,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.search_page_retry))
+                            }
                         }
                     }
                 }
@@ -192,59 +229,27 @@ fun TickerSearchScreen(
 }
 
 /**
- * What the results area says while it lists nothing: a scope-specific hint before typing, "No
- * markets match" after, and under that, when the other scope does have the query, a tappable
- * "N matches in Stocks" (or Crypto) that switches to it.
+ * The results area stays calm while a new filter request is pending and explains how to begin
+ * when the full catalogue is not filtered yet.
  */
 @Composable
 private fun EmptyResults(
     state: TickerSearchUiState,
-    onShowOtherScope: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = stringResource(
-                when {
-                    state.query.isNotBlank() -> R.string.search_no_match
-                    state.scope == AssetClass.STOCK -> R.string.search_scope_stocks_hint
-                    else -> R.string.search_hint
-                },
+                if (state.query.isNotBlank() || state.instrumentKind != null || state.source != null
+                ) R.string.search_no_match else R.string.search_hint,
             ),
             style = TGType.body,
-            // The Stocks hint is long enough to wrap at large font scales: keep it off the edges.
+            // The hint can wrap at large font scales; keep it clear of the screen edges.
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
-        val count = state.otherScopeMatches
-        if (state.query.isNotBlank() && count > 0) {
-            val cap = TickerSearchUiState.OTHER_SCOPE_MATCH_CAP
-            Box(
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .clip(HintShape)
-                    .clickable(role = Role.Button, onClick = onShowOtherScope)
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = pluralStringResource(
-                        if (state.otherScope == AssetClass.STOCK) {
-                            R.plurals.search_scope_matches_stocks
-                        } else {
-                            R.plurals.search_scope_matches_crypto
-                        },
-                        count,
-                        if (count > cap) "$cap+" else count.toString(),
-                    ),
-                    style = TGType.button,
-                )
-            }
-        }
     }
 }
-
-private val HintShape = RoundedCornerShape(percent = 50)
 
 @Composable
 private fun SearchField(
@@ -295,11 +300,42 @@ private fun MarketRow(
                 maxLines = 1,
             )
             Text(
-                text = market.key.pair,
+                text = market.displayLabel(),
                 style = TGType.pair,
+                maxLines = if (market.instrumentKind == InstrumentKind.OUTCOME) 2 else 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val isOutcome = market.instrumentKind == InstrumentKind.OUTCOME
+            val details = if (isOutcome) {
+                listOfNotNull(market.instrumentKind.label, market.outcomeSide)
+                    .joinToString(" · ")
+            } else {
+                market.contextLabel()
+            }
+            Text(
+                text = details,
+                style = TGType.subLabel,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (isOutcome) {
+                val operational = buildList {
+                    market.venue?.takeIf(String::isNotBlank)?.let(::add)
+                    market.unit?.takeIf(String::isNotBlank)?.let(::add)
+                    market.expiresAt?.let { expiry ->
+                        add(stringResource(R.string.search_expiry, DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(expiry))))
+                    }
+                    if (!market.active) add("Inactive")
+                }.joinToString(" · ")
+                if (operational.isNotEmpty()) {
+                    Text(
+                        text = operational,
+                        style = TGType.exchange,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
         if (selected) {
             Icon(
@@ -311,3 +347,7 @@ private fun MarketRow(
         }
     }
 }
+
+private const val PREFETCH_DISTANCE = 5
+private const val PAGE_LOADING_KEY = "search-page-loading"
+private const val PAGE_RETRY_KEY = "search-page-retry"

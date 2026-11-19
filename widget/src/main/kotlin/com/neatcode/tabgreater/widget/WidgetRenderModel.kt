@@ -1,12 +1,16 @@
 package com.neatcode.tabgreater.widget
 
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.core.model.Market
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.ShrunkPrice
 import com.neatcode.tabgreater.core.model.Ticker
 import kotlinx.serialization.Serializable
+import java.text.DateFormat
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -41,10 +45,56 @@ data class WidgetRenderModel(
     val showSparkline: Boolean,
     val spark: List<Float> = emptyList(),
     val hasChange: Boolean = true,
+    /** Instrument type, unit and settlement details for the widget's freshness line. */
+    val marketContext: String = "",
 ) {
     /** The market this widget is bound to, or `null` if the stored key no longer parses. */
     val marketKey: MarketKey? get() = MarketKey.parseOrNull(key)
+
+    /** An older cached widget put a category immediately before the instrument type. */
+    internal fun contextForDisplay(): String {
+        val first = marketContext.substringBefore(" · ")
+        if (InstrumentKind.entries.any { it.label == first }) return marketContext
+        val details = marketContext.substringAfter(" · ", missingDelimiterValue = "")
+        val type = details.substringBefore(" · ")
+        return if (InstrumentKind.entries.any { it.label == type }) details else marketContext
+    }
 }
+
+/** Outcome sides lead so a long question cannot hide the only distinction in a widget/result row. */
+internal fun Market.compactDisplayLabel(): String {
+    val label = displayName?.takeIf(String::isNotBlank) ?: key.pair
+    if (instrumentKind != InstrumentKind.OUTCOME && outcomeSide.isNullOrBlank()) return label
+    val side = outcomeSide?.takeIf(String::isNotBlank) ?: return label
+    val prompt = label.removePrefix("$side · ").removeSuffix(" · $side").takeIf(String::isNotBlank) ?: label
+    if (prompt.equals(side, ignoreCase = true)) return side
+    val segments = prompt.split(" · ").map(String::trim).filter(String::isNotEmpty)
+    return if (segments.size > 1) {
+        "${compactOutcomeHeadline(side, segments.last())}\n${segments.dropLast(1).joinToString(" · ")}"
+    } else {
+        "$side · $prompt"
+    }
+}
+
+private fun compactOutcomeHeadline(side: String, participant: String): String {
+    val full = "$side · $participant"
+    if (full.length <= MAX_EVENT_HEADLINE_CHARS) return full
+    val words = participant.split(Regex("\\s+")).filter(String::isNotBlank)
+    if (words.size < 2) return full
+    val city = words.indexOfFirst { it.equals("city", ignoreCase = true) }
+    val locationWords = if (city >= 0) {
+        words.take(city).map { it.take(2).uppercase() } + words[city].take(1).uppercase()
+    } else {
+        words.dropLast(1).map { it.take(1).uppercase() }
+    }
+    val compact = "$side · ${locationWords.joinToString("")} ${words.last()}"
+    return compact.takeIf { it.length < full.length } ?: full
+}
+
+private const val MAX_EVENT_HEADLINE_CHARS = 24
+
+/** The live widget has one compact headline row; keep the participant and side ahead of context. */
+private fun Market.compactWidgetLabel(): String = compactDisplayLabel().substringBefore('\n')
 
 /**
  * Turns a [WidgetConfig] plus the newest [Ticker] into a [WidgetRenderModel]. Pure and
@@ -68,14 +118,24 @@ internal object WidgetModelFactory {
         confirmedAtEpochMs: Long? = ticker?.timestamp,
         isStale: Boolean? = null,
         historyAnchor: Double? = spark.firstOrNull()?.toDouble(),
+        market: Market? = null,
     ): WidgetRenderModel {
         val changePct = ticker?.let { it.changePct24h ?: derivedChangePct(it) ?: windowChangePct(it, historyAnchor) }
         val precision = pricePrecision ?: fallbackPrecision(ticker?.last)
+        val displayPair = market?.compactWidgetLabel() ?: config.key.pair
+        val unit = PriceFormat.cardUnit(market?.unit, displayPair)
+        val headline = if (unit != null) {
+            "$displayPair · $unit"
+        } else if (market?.instrumentKind == InstrumentKind.PERPETUAL && displayPair.length <= 22) {
+            "$displayPair · Perp"
+        } else {
+            displayPair
+        }
         return WidgetRenderModel(
             key = config.key.value,
             exchange = config.key.exchange.displayName.uppercase(),
-            pair = config.key.pair,
-            price = ticker?.let { shrink(PriceFormat.formatPrice(it.last, precision)) } ?: PriceFormat.NO_VALUE,
+            pair = headline,
+            price = ticker?.let { shrink(PriceFormat.formatPriceCompact(it.last, precision)) } ?: PriceFormat.NO_VALUE,
             change = PriceFormat.formatChangePct(changePct),
             changeUp = (changePct ?: 0.0) >= 0.0,
             hasData = ticker != null,
@@ -85,8 +145,20 @@ internal object WidgetModelFactory {
             showSparkline = config.showSparkline,
             spark = spark,
             hasChange = changePct != null,
+            marketContext = market?.let(::contextLabel).orEmpty(),
         )
     }
+
+    private fun contextLabel(market: Market): String = buildList {
+        add(market.instrumentKind.label)
+        market.outcomeSide?.takeIf(String::isNotBlank)?.let(::add)
+        market.venue?.takeIf(String::isNotBlank)?.let(::add)
+        market.unit?.takeIf(String::isNotBlank)?.let(::add)
+        market.expiresAt?.let { expiry ->
+            add("Deadline ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(expiry))}")
+        }
+        if (!market.active) add("Inactive")
+    }.joinToString(" · ")
 
     /** `hh:mm:ss` in the device's zone — the "Last updated" line asks the widget to show. */
     fun clockOf(epochMillis: Long, zone: ZoneId): String {

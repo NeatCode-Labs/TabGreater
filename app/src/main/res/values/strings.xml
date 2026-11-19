@@ -9,10 +9,23 @@
     <string name="watchlist_empty">No pairs yet</string>
 
     <!-- Ticker search -->
-    <string name="search_placeholder">Search pair, e.g. BTC/EUR</string>
-    <string name="search_hint">Type to search</string>
+    <string name="search_placeholder">Search pairs, names or events</string>
+    <string name="search_hint">No markets available</string>
     <string name="search_no_match">No markets match</string>
+    <string name="search_retry">Retry search</string>
     <string name="search_add">Add %1$d</string>
+    <string name="search_page_retry">Retry loading more</string>
+    <string name="search_kind_all">All types</string>
+    <string name="search_kind_spot">Spot</string>
+    <string name="search_kind_perpetual">Perpetual</string>
+    <string name="search_kind_outcome">Outcome</string>
+    <string name="search_source_all">All sources</string>
+    <string name="search_filter_kind">Instrument type filter, %1$s</string>
+    <string name="search_filter_source">Source filter, %1$s</string>
+    <string name="search_filter_state">Current selection: %1$s</string>
+    <string name="search_filter_action">Open filter choices</string>
+    <string name="search_expiry">Deadline %1$s</string>
+    <string name="market_kind_outcome">Outcome</string>
 
     <!-- Content descriptions -->
     <string name="cd_back">Back</string>
@@ -94,7 +107,7 @@
 
     <!-- About screen -->
     <string name="about_title">About TabGreater</string>
-    <string name="about_version">TabGreater %1$s — a free, open-source crypto watchlist with charts and home-screen widgets. Live spot data from Binance, Gate.io, Kraken, KuCoin and MEXC.</string>
+    <string name="about_version">TabGreater %1$s is an open-source market watchlist with charts and home-screen widgets. Track spot markets from Binance, Gate.io, Kraken, KuCoin, MEXC and Hyperliquid, plus Hyperliquid perpetuals and event outcomes.</string>
     <string name="about_independent">TabGreater is an independent open-source project by NeatCode Labs, released under the GNU General Public License v3.0 or later: you may use, study, share and improve it, and anyone who distributes a modified version must publish their source under the same licence and keep this notice. It is not affiliated with, endorsed by or sponsored by any exchange. Exchange names are trademarks of their respective owners.</string>
     <string name="about_data_title">Data sources &amp; privacy</string>
     <string name="about_data_body">Prices and candles travel straight from each exchange\'s public API to your device. TabGreater has no server, no account and no analytics, and collects nothing. Because your phone talks to the exchanges directly, your IP address and the pairs you watch are visible to the exchanges you use, under their own terms of service. Watchlists and settings stay on your device (and in your Android backup, if you have it enabled).</string>
@@ -200,17 +213,24 @@
     <string name="price_status_empty">No prices to check</string>
     <string name="price_status_current">Prices confirmed</string>
     <string name="price_status_refreshing">Refreshing prices…</string>
-    <string name="price_status_stale">Some prices are not current</string>
+    <string name="price_status_stale">Prices to check</string>
     <string name="price_status_error">Could not refresh all prices</string>
     <string name="price_status_empty_detail">Add a pair to this watchlist to follow its price.</string>
     <string name="price_status_current_detail">All prices in this watchlist have been confirmed recently.</string>
     <string name="price_status_refreshing_detail">Checking for confirmed prices. Saved values remain visible.</string>
-    <string name="price_status_stale_detail">Some prices have not been confirmed recently. Saved values remain visible.</string>
-    <string name="price_status_error_detail">Confirmed and saved prices remain visible. Try again to check the affected pairs.</string>
     <string name="price_status_affected">Affected pairs</string>
-    <string name="price_status_issue_old">Price has not been confirmed for at least ten minutes.</string>
-    <string name="price_status_issue_unconfirmed">Waiting for a confirmed price.</string>
-    <string name="price_status_issue_error">Price could not be refreshed.</string>
+    <string name="price_status_issue_old">The app has received no newer price. The cause is unknown.</string>
+    <string name="price_status_issue_cached">Showing a saved price while waiting for an update.</string>
+    <string name="price_status_issue_missing">Waiting for the first price update.</string>
+    <string name="price_status_issue_error">The last price request failed. The cause is unknown.</string>
+    <string name="price_status_issue_rate_limit">The exchange limited price requests. Try again later.</string>
+    <string name="price_status_issue_forbidden">The exchange denied this price request.</string>
+    <string name="price_status_issue_region">The exchange restricts access from this region.</string>
+    <string name="price_status_issue_market">The price request returned no usable price for this pair.</string>
+    <string name="price_status_issue_response">The app could not read the price in the exchange response.</string>
+    <string name="price_status_issue_deferred">The app postponed this price request.</string>
+    <string name="price_status_last_trade">Latest trade received: %1$s · %2$s ago</string>
+    <string name="price_status_price_received">Last price update received %1$s ago.</string>
     <string name="price_status_pair">%1$s · %2$s</string>
     <string name="price_status_retry">Retry</string>
 </resources>

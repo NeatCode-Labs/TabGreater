@@ -79,6 +79,8 @@ object TGDimens {
     const val GRID_GAP_DP = 8
     const val SPARK_W_DP = 61
     const val SPARK_H_DP = 39
+    /** Chart in the exchange row when the title needs the whole half-width tile. */
+    const val SPARK_SHORT_H_DP = 20
     /** The line reads as 1.8-2.3 dp once anti-aliased; 1.5 dp + AA is what produces that on screen (F1). */
     const val SPARK_STROKE_DP = 1.5f
     const val SPARK_FILL_ALPHA = 0.22f

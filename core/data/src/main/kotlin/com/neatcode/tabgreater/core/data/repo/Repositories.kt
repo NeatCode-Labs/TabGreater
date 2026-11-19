@@ -1,11 +1,11 @@
 package com.neatcode.tabgreater.core.data.repo
 
-import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.ImportMode
 import com.neatcode.tabgreater.core.model.ImportResult
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.SortMode
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.TileSize
@@ -54,6 +54,8 @@ interface WatchlistRepository {
 
     /** Appends keys not already present; silently ignores duplicates and the 100-item cap overflow. */
     suspend fun addItems(watchlistId: Long, keys: List<MarketKey>)
+    /** Re-keys one saved row while preserving its id, position and accent; refuses list duplicates. */
+    suspend fun rolloverItem(itemId: Long, expectedKey: MarketKey, newKey: MarketKey): Boolean
     suspend fun removeItem(itemId: Long)
     suspend fun removeItems(itemIds: Collection<Long>)
     suspend fun reorderItems(watchlistId: Long, orderedItemIds: List<Long>)
@@ -91,7 +93,7 @@ interface WatchlistRepository {
     suspend fun importBackup(backup: WatchlistBackup, mode: ImportMode): ImportResult
 }
 
-/** Exchange instrument lists, cached in Room and refreshed at most once per [MAX_AGE_MS] unless forced. */
+/** Exchange instrument lists cached in Room with source-specific freshness windows. */
 interface MarketRepository {
     /** Fetches the instrument list from the exchange and upserts it. No-op if fresh and not [force]. */
     suspend fun refreshMarkets(exchange: ExchangeId, force: Boolean = false): Result<Unit>
@@ -103,23 +105,19 @@ interface MarketRepository {
     suspend fun getMarkets(keys: Collection<MarketKey>): Map<MarketKey, Market>
 
     /**
-     * Case-insensitive search over base, quote and "BASE/QUOTE"; e.g. "btc", "eur", "btc/eur", "btceur".
-     * Without a `/` every part is prefix-matched ("eth" -> ETH/USDT, ETHFI/USDT, ...); with a `/`
-     * the base is exact and only the quote is a prefix ("eth/usd" -> ETH/USD, ETH/USDT, ETH/USDC).
-     * Results ordered by exchange, then base, then quote.
-     *
-     * [assetClass] narrows the result to one class; `null` returns every class. A
-     * [AssetClass.STOCK] search lists the tokens whose [Market.underlying] equals the typed base
-     * ("tsla" -> every TSLA token) before the rest, each group in the usual order.
+     * Returns the uniquely confirmed next contract for a daily recurring outcome, if one is
+     * present in the cached complete catalogue. Ambiguous or not-yet-listed contracts return null.
      */
-    suspend fun search(query: String, limit: Int = 300, assetClass: AssetClass? = null): List<Market>
+    suspend fun nextDailyOutcomeMarket(current: Market, nowEpochMs: Long): Market? = null
 
-    /**
-     * Up to [limit] underlyings of the cached stock tokens, the most widely listed first: by the
-     * number of exchanges that list one, then by its number of markets, then alphabetically.
-     * Reads the local catalogue only (no network); empty while it holds no stock token.
-     */
-    suspend fun popularStockRoots(limit: Int = 8): List<String>
+    /** One stable page of active instruments. An empty query browses all matching markets. */
+    suspend fun searchPage(
+        query: String,
+        limit: Int = 60,
+        offset: Int = 0,
+        instrumentKind: InstrumentKind? = null,
+        exchange: ExchangeId? = null,
+    ): List<Market>
 
     companion object {
         const val MAX_AGE_MS: Long = 24L * 60 * 60 * 1000

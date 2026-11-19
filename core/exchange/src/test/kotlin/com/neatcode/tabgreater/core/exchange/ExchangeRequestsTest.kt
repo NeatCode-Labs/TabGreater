@@ -7,12 +7,35 @@ import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class ExchangeRequestsTest {
+    @Test fun `a refused POST payload does not mask another market on the same info endpoint`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            val client = OkHttpClient()
+            val exchange = ExchangeId.HYPERLIQUID
+            suspend fun info(coin: String): String {
+                val payload = """{"type":"recentTrades","coin":"$coin"}"""
+                val request = Request.Builder().url(server.url("/info")).post(payload.toRequestBody()).build()
+                return ExchangeRequests.execute(exchange, client, request, payload) { response, body ->
+                    ExchangeHttpException(exchange, response.code, body)
+                }.body
+            }
+            server.enqueue(MockResponse.Builder().code(451).body("region").build())
+            server.enqueue(MockResponse.Builder().body("trades").build())
+            assertEquals(ExchangeFailureKind.REGION_RESTRICTED, runCatching { info("xyz:ANT") }.exceptionOrNull()!!.exchangeFailureKind())
+            assertEquals("trades", info("BTC"))
+            assertEquals(2, server.requestCount)
+            client.connectionPool.evictAll()
+            client.dispatcher.executorService.shutdown()
+        }
+    }
+
     @Test fun `last HTTP waiter cancels a response while its body is still being read`() = runBlocking {
         MockWebServer().use { server ->
             server.start()

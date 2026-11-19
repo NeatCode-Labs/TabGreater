@@ -8,13 +8,10 @@ import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
-import com.neatcode.tabgreater.core.exchange.StockTokens
-import com.neatcode.tabgreater.core.exchange.classified
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.exchange.ws.ExchangeSocket
 import com.neatcode.tabgreater.core.exchange.ws.SocketState
 import com.neatcode.tabgreater.core.exchange.ws.SubscriptionBook
-import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
@@ -95,9 +92,8 @@ class GateAdapter(
     // pair list alone is ~2 200 entries.
     override suspend fun listMarkets(): List<Market> = withContext(Dispatchers.IO) {
         val pairs = json.decodeFromString<List<CurrencyPairDto>>(get(PATH_CURRENCY_PAIRS))
-        // Asked for only once the pairs are in, so a blocked region still fails on the first call.
-        val categories = currencyCategories()
-        val markets = pairs.asSequence()
+        val underlyings = currencyUnderlyings()
+        pairs.asSequence()
             .filter { it.tradeStatus == STATUS_TRADABLE }
             // Gate lists pairs with non-ASCII bases (e.g. "龙虾_USDT") that no other layer can key.
             .filter { SYMBOL_PART.matches(it.base) && SYMBOL_PART.matches(it.quote) }
@@ -107,63 +103,28 @@ class GateAdapter(
                     nativeSymbol = dto.id,
                     pricePrecision = dto.precision.coerceAtLeast(0),
                     tickSize = tickSizeOf(dto.precision),
-                ).classified(stockUnderlyingOf(dto, categories))
+                    underlying = underlyings[dto.base],
+                    description = dto.baseName?.takeIf(String::isNotBlank),
+                )
             }
             .toList()
-        withLeveragedStocks(markets, categories)
     }
 
-    /**
-     * `category` per currency from `/spot/currencies` (~2 MB, the only place Gate marks stock tokens),
-     * or `null` when that call fails twice: the catalogue must not depend on it, so stock tokens then
-     * fall back to what their pair names give away. The second attempt matters because the result is
-     * stored as a fresh catalogue for a day, so a one-off failure would otherwise last that long.
-     */
-    private suspend fun currencyCategories(): Map<String, List<String>>? {
+    /** Optional exchange aliases allow a search by the underlying symbol as well as the spot pair. */
+    private suspend fun currencyUnderlyings(): Map<String, String> {
         repeat(CURRENCIES_ATTEMPTS) { attempt ->
             try {
                 return json.decodeFromString<List<CurrencyDto>>(get(PATH_CURRENCIES))
-                    .associate { it.currency to it.category.orEmpty() }
+                    .mapNotNull { currency ->
+                        currency.tokenizedSecurityInfo?.underlying?.takeIf(String::isNotBlank)?.let { currency.currency to it }
+                    }.toMap()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logger("${id.id}: currencies attempt ${attempt + 1} failed: ${e.message}")
+                logger("${id.id}: currency aliases attempt ${attempt + 1} failed: ${e.message}")
             }
         }
-        logger("${id.id}: stock tokens are classified by name")
-        return null
-    }
-
-    /** A currency missing from the list (none was on 2026-10-04) is judged by name, like a failed call. */
-    private fun stockUnderlyingOf(dto: CurrencyPairDto, categories: Map<String, List<String>>?): String? {
-        val known = categories?.get(dto.base) ?: return StockTokens.gateByName(dto.base, dto.baseName.orEmpty())
-        return StockTokens.gate(dto.base, known)
-    }
-
-    /**
-     * Gate's leveraged tokens carry no category, so one on a share (`TSLA3L`) is moved to the stocks
-     * here. Its root may be any share Gate knows: one just classified, or any stock currency in
-     * [categories], tradable or not (`NOK3L` trades while no NOK token does). A root that is also
-     * one of Gate's coins is not a share root: `QNT3L` tracks QNT (Quant), not the `QNTG` share, as
-     * Gate gives a colliding share a perpetual of its own (`QNTX_USDT`).
-     */
-    private fun withLeveragedStocks(markets: List<Market>, categories: Map<String, List<String>>?): List<Market> {
-        val roots = HashSet<String>()
-        val coins = HashSet<String>()
-        markets.mapNotNullTo(roots) { it.underlying }
-        categories?.forEach { (currency, tags) ->
-            val share = StockTokens.gate(currency, tags)
-            if (share != null) roots += share.uppercase() else coins += currency.uppercase()
-        }
-        roots -= coins
-        if (roots.isEmpty()) return markets
-        return markets.map { market ->
-            if (market.assetClass == AssetClass.STOCK) {
-                market
-            } else {
-                market.classified(StockTokens.gateLeveraged(market.base, roots))
-            }
-        }
+        return emptyMap()
     }
 
     /**
@@ -570,16 +531,19 @@ private data class CurrencyPairDto(
     /** Price decimals, e.g. `1` for BTC_USDT and `9` for PEPE_USDT. */
     val precision: Int = 0,
     @SerialName("trade_status") val tradeStatus: String = "",
-    /** `"Tesla xStock"`, `"Apple Ondo Tokenized"`: the stock marker of last resort. */
+    /** `"Tesla xStock"`, `"Apple Ondo Tokenized"`: the display name supplied by Gate. */
     @SerialName("base_name") val baseName: String? = null,
 )
 
-/** `GET /spot/currencies` row; `category` is e.g. `["stocks","xstocks"]` and may be absent. */
+/** `GET /spot/currencies` row; optional underlying symbol for search. */
 @Serializable
 private data class CurrencyDto(
     val currency: String = "",
-    val category: List<String>? = null,
+    @SerialName("tokenized_security_info") val tokenizedSecurityInfo: TokenizedSecurityInfoDto? = null,
 )
+
+@Serializable
+private data class TokenizedSecurityInfoDto(val underlying: String? = null)
 
 /** Shared by `GET /spot/tickers` and the `spot.tickers` stream — Gate sends the same fields on both. */
 @Serializable

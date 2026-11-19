@@ -1,53 +1,79 @@
 package com.neatcode.tabgreater.widget
 
-import com.neatcode.tabgreater.core.model.AssetClass
+import com.neatcode.tabgreater.core.model.ExchangeId
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.Market
 
-/** One search of the widget picker, with the [scope] it was run in. */
+/** Independent instrument-kind and market-data source filters. */
+internal data class WidgetSearchFilters(
+    val instrumentKind: InstrumentKind? = null,
+    val source: ExchangeId? = null,
+) {
+    val isFiltered: Boolean get() = instrumentKind != null || source != null
+}
+
+/** One page of a specific query and filter selection. [nextOffset] counts fetched rows. */
 internal data class ScopedResults(
-    val scope: AssetClass,
+    val query: String = "",
+    val filters: WidgetSearchFilters = WidgetSearchFilters(),
     val markets: List<Market> = emptyList(),
-    /**
-     * How many markets the other scope has for the query when [scope] has none; 0 otherwise.
-     * Counted up to [WidgetSearch.OTHER_SCOPE_MATCH_CAP] + 1.
-     */
-    val otherScopeMatches: Int = 0,
+    val nextOffset: Int = 0,
 )
 
-/**
- * The scope rules of the widget picker's "Crypto | Stocks" search, the same ones the app's
- * "+ Add pair" screen follows. Kept out of the composable so they are unit testable.
- */
+/** Rows refreshed without discarding the current scroll position. */
+internal data class RefreshedResults(
+    val results: ScopedResults,
+    val hasMore: Boolean,
+)
+
+/** Query normalization and paging rules shared by the widget picker. */
 internal object WidgetSearch {
-
-    /** The largest count the cross-scope hint spells out; anything above it shows as "100+". */
-    const val OTHER_SCOPE_MATCH_CAP = 100
-
-    /**
-     * Searches [text] in [scope] through [search] (`MarketRepository.search`). Only when that finds
-     * nothing is the other scope probed, with a capped limit, for the "N matches in …" hint.
-     */
-    suspend fun run(
+    suspend fun page(
         text: String,
-        scope: AssetClass,
+        filters: WidgetSearchFilters,
         limit: Int,
-        search: suspend (query: String, limit: Int, assetClass: AssetClass) -> List<Market>,
+        offset: Int,
+        searchPage: suspend (
+            query: String,
+            limit: Int,
+            offset: Int,
+            instrumentKind: InstrumentKind?,
+            source: ExchangeId?,
+        ) -> List<Market>,
     ): ScopedResults {
-        if (text.isBlank()) return ScopedResults(scope)
-        val markets = search(text, limit, scope)
-        val elsewhere = if (markets.isEmpty()) {
-            search(text, OTHER_SCOPE_MATCH_CAP + 1, other(scope)).size
-        } else {
-            0
-        }
-        return ScopedResults(scope, markets, elsewhere)
+        val query = text.trim()
+        val markets = searchPage(query, limit, offset, filters.instrumentKind, filters.source)
+        return ScopedResults(
+            query = query,
+            filters = filters,
+            markets = markets,
+            nextOffset = offset + markets.size,
+        )
     }
 
-    /** The scope the hint switches to: there are exactly two. */
-    fun other(scope: AssetClass): AssetClass =
-        if (scope == AssetClass.STOCK) AssetClass.CRYPTO else AssetClass.STOCK
-
-    /** The count as the hint prints it: `7`, or `100+` above the cap. */
-    fun countLabel(count: Int): String =
-        if (count > OTHER_SCOPE_MATCH_CAP) "$OTHER_SCOPE_MATCH_CAP+" else count.toString()
+    /**
+     * Re-reads the currently visible prefix with one extra row as a continuation probe. The
+     * caller can replace rows by stable market keys while retaining the list's scroll state.
+     */
+    suspend fun refreshVisible(
+        text: String,
+        filters: WidgetSearchFilters,
+        visibleCount: Int,
+        firstPageSize: Int,
+        searchPage: suspend (
+            query: String,
+            limit: Int,
+            offset: Int,
+            instrumentKind: InstrumentKind?,
+            source: ExchangeId?,
+        ) -> List<Market>,
+    ): RefreshedResults {
+        val desiredCount = maxOf(visibleCount, firstPageSize)
+        val page = page(text, filters, limit = desiredCount + 1, offset = 0, searchPage = searchPage)
+        val visible = page.markets.take(desiredCount)
+        return RefreshedResults(
+            results = page.copy(markets = visible, nextOffset = visible.size),
+            hasMore = page.markets.size > visible.size,
+        )
+    }
 }

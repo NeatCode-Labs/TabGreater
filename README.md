@@ -28,9 +28,9 @@
   <a href="SECURITY.md">Security</a>
 </p>
 
-TabGreater is a free, open-source Android watchlist for spot crypto markets.
-It shows live prices from five exchanges on sparkline tiles, opens a full
-candlestick chart with indicators for any pair, and keeps one-pair widgets on
+TabGreater is a free, open-source Android watchlist for spot pairs, perpetual contracts and event outcomes.
+It shows prices from six exchanges on sparkline tiles, opens
+candlestick charts with indicators when price history is available, and keeps one-pair widgets on
 your home screen fresh through Android's foreground service. Android may show a
 service notice, depending on its version and settings. Your phone talks to the
 exchanges directly: there is no backend, no account and nothing is collected.
@@ -43,8 +43,8 @@ exchanges directly: there is no backend, no account and nothing is collected.
   Change); drag to reorder, long-press for colour stripes, move and delete;
   JSON export and import.
 - **Live prices** — WebSocket streams while the app is open on Binance,
-  Gate.io, Kraken and KuCoin; MEXC has no public ticker socket, so it is polled
-  over REST. A candle cache on disk keeps tiles from ever being empty.
+  Gate.io, Hyperliquid, Kraken and KuCoin. MEXC prices are polled over REST.
+  Tiles can show saved candle history while new data is loading.
   A fixed header icon shows price status without moving the tiles. Tap it for
   details and Retry; hold it for its label.
 - **Charts** — candles / hollow / OHLC / area, timeframes 1 m … 1 M, eleven
@@ -65,19 +65,9 @@ exchanges directly: there is no backend, no account and nothing is collected.
   battery use depends on the refresh cadence, device and network conditions.
 - **Quick add** — the five biggest coins that are not stablecoins or wrapped
   tokens are one tap away when you add a pair (ranking from CoinGecko,
-  refreshed daily); under *Stocks*, the eight tickers listed on the most
-  exchanges.
-- **Tokenized stocks** — "+ Add pair" and the widget setup have a
-  *Crypto | Stocks* switch. *Stocks* finds the stock tokens the five exchanges
-  list as spot pairs by the share's ticker: `TSLA` brings up the TSLA tokens
-  across the exchanges, such as `TSLAB/USDT` and `TSLAX/USDT`, and Kraken's
-  tokenized stocks (`AAPLX/USD`, …) are in the catalogue too.
-  *Crypto*, the default, leaves them out. On tiles, charts and widgets a stock
-  token works like any other pair. These are tokens trading on crypto
-  exchanges, not stock-exchange quotes: prices can differ from the share price
-  and between exchanges, some exchanges trade them only on weekdays, and
-  coverage is mostly US large caps and ETFs.
-- **Exchanges** — Binance, Gate.io, Kraken, KuCoin, MEXC (spot only).
+  refreshed daily).
+- **Market search** — browse by name, symbol, instrument type and source in "+ Add pair" and widget setup. Scroll for more results.
+- **Sources** — Binance, Gate.io, Kraken, KuCoin and MEXC spot markets, plus Hyperliquid spot, perpetual and outcome markets.
 - **Dark theme**, en-US number formatting, "shrink zeros" for sub-cent prices
   (`0.0₄123`).
 
@@ -171,9 +161,7 @@ to end users, so it is left out on purpose.
 <summary><b>Does TabGreater show stock prices?</b></summary>
 
 Not from a stock exchange. TabGreater reads only the exchanges' public APIs,
-with no API key. What the *Stocks* switch lists are tokenized stocks: tokens
-that track a share and that Binance, Gate.io, Kraken, KuCoin and MEXC list as
-spot pairs. Their price comes from trading on that exchange, so it can differ
+with no API key. Search by a listed symbol such as `AAPLX/USD` to find tokenized shares. These tokens track shares and trade as spot pairs. Their price comes from trading on that exchange, so it can differ
 from the share price and from one exchange to the next. Some exchanges trade
 them around the clock, others only on weekdays; outside trading hours a tile
 keeps the last price. Coverage is mostly US large caps and ETFs.
@@ -208,9 +196,7 @@ battery-optimisation permissions to comply with Play policy.
 
 From CoinGecko's public market-cap ranking, fetched at most once a day and
 cached on the device; stablecoins and wrapped tokens are filtered out. If the
-request fails, the app falls back to the last cached list. The tickers offered
-under *Stocks* are ranked on the device from the exchanges' market lists, by
-how many exchanges list each one; that takes no extra request.
+request fails, the app falls back to the last cached list.
 
 </details>
 

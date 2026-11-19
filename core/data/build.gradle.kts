@@ -13,6 +13,7 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
         consumerProguardFiles("consumer-rules.pro")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -27,6 +28,8 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 }
+
+android.sourceSets.getByName("androidTest").assets.srcDirs(files("$projectDir/schemas"))
 
 kotlin {
     jvmToolchain(libs.versions.jdk.get().toInt())
@@ -56,5 +59,6 @@ dependencies {
     // bridge); it backs the CoinGecko popular-pairs source test.
     testImplementation(libs.okhttp.mockwebserver3)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.room.testing)
 }

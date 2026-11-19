@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -14,8 +13,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.neatcode.tabgreater.core.model.TGDimens
 import com.neatcode.tabgreater.core.model.TileSize
-import com.neatcode.tabgreater.ui.components.Sparkline
 import com.neatcode.tabgreater.ui.theme.TG
+import com.neatcode.tabgreater.ui.theme.TGType
 
 /**
  * The **Compact** tile: 170 × 119 dp, two columns.
@@ -43,25 +42,7 @@ internal fun CompactTile(
         Box(Modifier.matchParentSize()) { TileAccentStripe(tile.accent) }
 
         Column(Modifier.tileRowHeight(TGDimens.TILE_ASPECT_COMPACT)) {
-            Box(Modifier.fillMaxWidth()) {
-                Sparkline(
-                    values = tile.spark,
-                    color = trend,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = SPARK_TOP_DP.dp, end = TILE_PADDING_DP.dp)
-                        .size(width = TGDimens.SPARK_W_DP.dp, height = TGDimens.SPARK_H_DP.dp),
-                )
-
-                TileHeader(
-                    tile = tile,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(start = TILE_PADDING_DP.dp, top = TILE_TOP_DP.dp),
-                    // Stop before the sparkline box (61 dp + 8 dp end inset) so long pairs ellipsise.
-                    pairEndPadding = (TGDimens.SPARK_W_DP + 4).dp,
-                )
-            }
+            HalfWidthTileHeader(tile, contextStyle = TGType.exchange)
 
             Spacer(Modifier.weight(1f))
 
@@ -77,7 +58,7 @@ internal fun CompactTile(
             ) {
                 TilePriceLines(tile, trend, shrinkZeros)
                 Spacer(Modifier.height(TGDimens.TILE_COMPACT_PRICE_GAP_DP.dp))
-                TileDetails(tile)
+                TileDetails(tile, shrinkZeros)
             }
         }
     }

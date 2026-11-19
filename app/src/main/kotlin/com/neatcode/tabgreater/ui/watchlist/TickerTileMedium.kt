@@ -1,6 +1,7 @@
 package com.neatcode.tabgreater.ui.watchlist
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,12 +48,13 @@ internal fun MediumTile(
         Row(
             modifier = Modifier
                 .tileRowHeight(TGDimens.TILE_ASPECT_MEDIUM)
+                .height(IntrinsicSize.Min)
                 .padding(start = TILE_PADDING_DP.dp, end = TILE_PADDING_DP.dp),
         ) {
             TileHeader(
                 tile = tile,
                 modifier = Modifier
-                    .width(TGDimens.TILE_MEDIUM_LEFT_DP.dp)
+                    .width((TGDimens.TILE_MEDIUM_LEFT_DP + if (tile.twoLineLabel) 42 else 0).dp)
                     .padding(top = TILE_TOP_DP.dp),
             )
 
@@ -62,6 +64,7 @@ internal fun MediumTile(
                 modifier = Modifier
                     .weight(1f)
                     .align(Alignment.CenterVertically)
+                    .padding(horizontal = (TILE_PADDING_DP / 2).dp)
                     .height(TGDimens.SPARK_MEDIUM_H_DP.dp),
             )
 
@@ -77,7 +80,7 @@ internal fun MediumTile(
             ) {
                 TilePriceLines(tile, trend, shrinkZeros)
                 Spacer(Modifier.weight(1f))
-                TileDetails(tile)
+                TileDetails(tile, shrinkZeros)
             }
         }
     }

@@ -1,0 +1,4 @@
+• Track Hyperliquid spot pairs, perpetual contracts and event outcomes.
+• Search by name or symbol, combine instrument type and source filters, and scroll beyond 300 results.
+• See the side, price threshold and deadline on daily price event cards. Supported cards advance to the next confirmed contract.
+• Read long market names, prices and percentage changes more easily across all four card sizes.

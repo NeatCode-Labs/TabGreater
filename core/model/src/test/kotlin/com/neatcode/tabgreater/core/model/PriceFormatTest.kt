@@ -41,6 +41,24 @@ class PriceFormatTest {
     }
 
     @Test
+    fun `compact card price removes padding but preserves meaningful precision`() {
+        assertEquals("65,609.7", PriceFormat.formatPriceCompact(65_609.7, 2))
+        assertEquals("5", PriceFormat.formatPriceCompact(5.0, 10))
+        assertEquals("0.000071501", PriceFormat.formatPriceCompact(0.000071501, 9))
+        assertEquals("0", PriceFormat.formatPriceCompact(-0.001, 2))
+        assertEquals(PriceFormat.NO_VALUE, PriceFormat.formatPriceCompact(Double.NaN, 2))
+    }
+
+    @Test
+    fun `market units are compacted for inline price labels`() {
+        assertEquals("USD/share", PriceFormat.compactUnit("USD per share"))
+        assertEquals("USD/contract", PriceFormat.compactUnit("USD per contract unit"))
+        assertEquals("USDC/token", PriceFormat.compactUnit("USDC per outcome token"))
+        assertEquals("probability", PriceFormat.compactUnit("probability"))
+        assertEquals(null, PriceFormat.compactUnit(null))
+    }
+
+    @Test
     fun `rounds half up`() {
         assertEquals("0.15", PriceFormat.formatPrice(0.145, 2))
         assertEquals("0.13", PriceFormat.formatPrice(0.125, 2))

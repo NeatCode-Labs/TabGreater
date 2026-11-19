@@ -5,6 +5,7 @@ import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
+
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CoroutineScope
@@ -76,45 +77,33 @@ class GateAdapterRestTest {
         val request = server.takeRequest()
         assertEquals("/api/v4/spot/currency_pairs", request.url.encodedPath)
         assertNull(request.url.query)
-        // The currency list is the only place Gate marks stock tokens.
+        // Currency details are the only source of explicit product tags and tokenized underlyings.
         val currencies = server.takeRequest()
         assertEquals("/api/v4/spot/currencies", currencies.url.encodedPath)
         assertNull(currencies.url.query)
     }
 
     @Test
-    fun `listMarkets tags stock tokens from the currency categories`() = runTest {
+    fun `listMarkets uses source categories and exact tokenized underlyings only`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(STOCK_PAIRS).build())
         server.enqueue(MockResponse.Builder().code(200).body(STOCK_CURRENCIES).build())
 
         val markets = adapter.listMarkets().associateBy { it.base }
 
-        val expected = mapOf(
-            "TSLAX" to "TSLA",
-            "AAPLON" to "AAPL",
-            "AAPLG" to "AAPL",
-            // Pre-IPO: only "stocks", so the token is its own underlying.
-            "SPCX" to "SPCX",
-            // Leveraged tokens carry no category and follow their root...
-            "TSLA3L" to "TSLA",
-            "TSLA3S" to "TSLA",
-            // ...which may be a share Gate lists no tradable token for.
-            "NOK3L" to "NOK",
-            "QNTG" to "QNT",
-        )
-        for ((base, underlying) in expected) {
-            val market = markets.getValue(base)
-            assertEquals(base, AssetClass.STOCK, market.assetClass)
-            assertEquals(base, underlying, market.underlying)
-        }
-        // The ONDO coin carries only the Ondo tag; the rest have no stock tag or no category at all.
-        // QNT3L follows the QNT coin, not the QNTG share whose root collides with it.
-        for (base in listOf("ONDO", "BTC", "BTC3L", "AVAX", "SHIB", "QNT", "QNT3L")) {
+        val stockBases = listOf("TSLAX", "AAPLON", "AAPLG", "SPCX", "QNTG")
+        assertTrue(markets.keys.containsAll(stockBases))
+        assertEquals("TSLA", markets.getValue("TSLAX").underlying)
+        assertEquals("AAPL", markets.getValue("AAPLON").underlying)
+        assertEquals("AAPL", markets.getValue("AAPLG").underlying)
+        assertEquals("QNT", markets.getValue("QNTG").underlying)
+        assertNull(markets.getValue("SPCX").underlying)
+        // No pair-name/suffix inheritance: the leveraged rows and unknown currencies stay unknown.
+        for (base in listOf("TSLA3L", "TSLA3S", "NOK3L", "ONDO", "BTC", "BTC3L", "AVAX", "SHIB", "QNT", "QNT3L")) {
             val market = markets.getValue(base)
             assertEquals(base, AssetClass.CRYPTO, market.assetClass)
             assertNull(base, market.underlying)
         }
-        assertEquals(expected.size + 7, markets.size)
+        assertEquals(stockBases.size + 10, markets.size)
     }
 
     @Test
@@ -125,14 +114,13 @@ class GateAdapterRestTest {
 
         val markets = adapter.listMarkets().associateBy { it.base }
 
-        // The gStock and the pre-IPO token are only known from the categories.
         assertEquals("AAPL", markets.getValue("AAPLG").underlying)
-        assertEquals("SPCX", markets.getValue("SPCX").underlying)
+        assertNull(markets.getValue("SPCX").underlying)
         assertEquals(3, server.requestCount)
     }
 
     @Test
-    fun `listMarkets falls back to the pair names when the currency list fails`() = runTest {
+    fun `listMarkets leaves spot markets available when the currency list fails`() = runTest {
         // A server error and an unreadable body must both leave the catalogue intact.
         val failures = listOf(
             MockResponse.Builder().code(500).body("boom").build(),
@@ -147,14 +135,9 @@ class GateAdapterRestTest {
             val markets = adapter.listMarkets().associateBy { it.base }
 
             assertEquals(15, markets.size)
-            assertEquals("TSLA", markets.getValue("TSLAX").underlying)
-            assertEquals("AAPL", markets.getValue("AAPLON").underlying)
-            assertEquals("TSLA", markets.getValue("TSLA3L").underlying)
-            assertEquals(AssetClass.STOCK, markets.getValue("TSLA3S").assetClass)
-            // Names give away neither gStocks nor pre-IPO tokens, and NOK has no named token.
-            val crypto = listOf("AAPLG", "SPCX", "NOK3L", "QNTG", "QNT", "QNT3L", "ONDO", "BTC", "BTC3L", "AVAX", "SHIB")
-            for (base in crypto) {
-                assertEquals(base, AssetClass.CRYPTO, markets.getValue(base).assetClass)
+            for ((base, market) in markets) {
+                assertEquals(base, AssetClass.CRYPTO, market.assetClass)
+                assertNull(base, market.underlying)
             }
         }
         assertEquals(6, server.requestCount)
@@ -388,15 +371,15 @@ class GateAdapterRestTest {
          */
         const val STOCK_CURRENCIES = """
         [
-          {"currency":"TSLAX","name":"Tesla xStock","delisted":false,"chain":"SOL","category":["stocks","xstocks"]},
-          {"currency":"AAPLON","name":"Apple Ondo Tokenized","category":["stocks","ondo-stocks"]},
-          {"currency":"AAPLG","name":"Apple","category":["gstocks","stocks"]},
+          {"currency":"TSLAX","name":"Tesla xStock","delisted":false,"chain":"SOL","category":["stocks","xstocks"],"tokenized_security_info":{"underlying":"TSLA"}},
+          {"currency":"AAPLON","name":"Apple Ondo Tokenized","category":["stocks","ondo-stocks"],"tokenized_security_info":{"underlying":"AAPL"}},
+          {"currency":"AAPLG","name":"Apple","category":["gstocks","stocks"],"tokenized_security_info":{"underlying":"AAPL"}},
           {"currency":"SPCX","name":"SpaceX","category":["stocks"],"total_supply":"33900"},
           {"currency":"NOKG","name":"Nokia","category":["gstocks","stocks"]},
           {"currency":"TSLA3L","name":"TSLA3xLong","category":[]},
           {"currency":"TSLA3S","name":"TSLA3xShort","category":[]},
           {"currency":"NOK3L","name":"NOK3xLong","category":[]},
-          {"currency":"QNTG","name":"Quantinuum","category":["gstocks","stocks"]},
+          {"currency":"QNTG","name":"Quantinuum","category":["gstocks","stocks"],"tokenized_security_info":{"underlying":"QNT"}},
           {"currency":"QNT","name":"Quant","category":[]},
           {"currency":"QNT3L","name":"QNT3xLong","category":[]},
           {"currency":"ONDO","name":"Ondo Finance","category":["ondo-stocks"]},

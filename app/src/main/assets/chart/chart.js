@@ -1293,7 +1293,7 @@
         oldSymbol.exchange !== sym.exchange || oldSymbol.ticker !== sym.ticker ||
         oldSymbol.instId !== sym.instId || oldPeriod.span !== p.span || oldPeriod.type !== p.unit;
       chart.setStyles({ candle: { tooltip: { title: {
-        template: label ? '{ticker} · ' + label : '{ticker} · {period}'
+        template: (sym.displayLabel || '{ticker}') + ' · ' + (label || '{period}')
       } } } });
       loaderMuted = true;
       try {

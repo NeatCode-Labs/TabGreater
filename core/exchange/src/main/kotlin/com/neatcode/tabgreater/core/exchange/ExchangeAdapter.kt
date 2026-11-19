@@ -17,6 +17,12 @@ interface ExchangeAdapter {
     /** Every active spot market with its native symbol and price precision. */
     suspend fun listMarkets(): List<Market>
 
+    /**
+     * Catalogue plus a completeness signal for sources whose product subcatalogues are fetched
+     * separately. Repositories must not prune stored rows from an incomplete snapshot.
+     */
+    suspend fun listMarketSnapshot(): MarketSnapshot = MarketSnapshot(listMarkets())
+
     /** One-shot 24 h ticker snapshot for the given markets. */
     suspend fun fetchTickers(markets: List<Market>): List<Ticker>
 
@@ -41,6 +47,8 @@ interface ExchangeAdapter {
     /** Timeframes the exchange serves natively; others are aggregated client-side. */
     val nativeTimeframes: Set<Timeframe>
 }
+
+data class MarketSnapshot(val markets: List<Market>, val isComplete: Boolean = true)
 
 /** Thrown when the exchange refuses service for this region (e.g. Binance HTTP 451). */
 class ExchangeUnavailableException(val exchange: ExchangeId, message: String) : Exception(message)

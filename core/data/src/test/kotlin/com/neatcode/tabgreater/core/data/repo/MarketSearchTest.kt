@@ -56,6 +56,18 @@ class MarketSearchTest {
     }
 
     @Test
+    fun `pair search spelling keeps aliases exact while spaced slash phrases stay free text`() {
+        assertTrue(isCanonicalPairSearch("BTC/EUR"))
+        assertTrue(isCanonicalPairSearch(" btc / eur "))
+        assertTrue(isCanonicalPairSearch("xyz:ANT/USD"))
+        assertFalse(isCanonicalPairSearch("2026/2027 NBA"))
+        assertFalse(isCanonicalPairSearch("BTC/EUR/USDT"))
+        assertEquals("BTC/EUR", normalisePairDisplayPrefix(" btc / eur "))
+        assertEquals("XYZ:ANT/USD", normalisePairDisplayPrefix("xyz:ANT/USD"))
+        assertNull(normalisePairDisplayPrefix("2026/2027 NBA"))
+    }
+
+    @Test
     fun `extra slashes are folded into the quote prefix`() {
         assertEquals(MarketQuery("BTC", "EUR"), parseSearchQuery("BTC/EU/R"))
     }

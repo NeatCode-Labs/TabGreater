@@ -46,7 +46,10 @@ data class WatchlistItemEntity(
 /** Cached instrument list per exchange (refreshed daily / on demand). */
 @Entity(
     tableName = "markets",
-    indices = [Index("exchange"), Index("base"), Index("quote")],
+    indices = [
+        Index("exchange"), Index("base"), Index("quote"), Index("instrument_kind"),
+        Index(value = ["rollover_series_id", "outcome_side", "expires_at"]),
+    ],
 )
 data class MarketEntity(
     @PrimaryKey @ColumnInfo(name = "market_key") val marketKey: String,
@@ -65,6 +68,16 @@ data class MarketEntity(
     @ColumnInfo(name = "asset_class", defaultValue = "'crypto'") val assetClass: String = "crypto",
     /** [com.neatcode.tabgreater.core.model.Market.underlying]; `null` for crypto. */
     val underlying: String? = null,
+    @ColumnInfo(name = "instrument_kind", defaultValue = "'spot'") val instrumentKind: String = "spot",
+    @ColumnInfo(name = "display_name") val displayName: String? = null,
+    val description: String? = null,
+    val unit: String? = null,
+    val venue: String? = null,
+    @ColumnInfo(name = "event_id") val eventId: String? = null,
+    @ColumnInfo(name = "outcome_id") val outcomeId: String? = null,
+    @ColumnInfo(name = "outcome_side") val outcomeSide: String? = null,
+    @ColumnInfo(name = "expires_at") val expiresAt: Long? = null,
+    @ColumnInfo(name = "rollover_series_id") val rolloverSeriesId: String? = null,
 )
 
 /** Candle cache so tiles and charts are never empty on cold start. */

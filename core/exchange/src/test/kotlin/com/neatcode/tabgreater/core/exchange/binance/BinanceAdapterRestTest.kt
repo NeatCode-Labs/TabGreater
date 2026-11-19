@@ -5,6 +5,7 @@ import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
+
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CoroutineScope
@@ -79,19 +80,14 @@ class BinanceAdapterRestTest {
     }
 
     @Test
-    fun `listMarkets tags bStocks by their trading group and keeps B-ending coins crypto`() = runTest {
+    fun `listMarkets does not classify from undocumented permission group ids or ticker suffixes`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(STOCK_EXCHANGE_INFO).build())
 
         val markets = adapter.listMarkets().associateBy { it.nativeSymbol }
 
         val tsla = markets.getValue("TSLABUSDT")
-        assertEquals(AssetClass.STOCK, tsla.assetClass)
-        assertEquals("TSLA", tsla.underlying)
         assertEquals(MarketKey.of(ExchangeId.BINANCE, "TSLAB", "USDT"), tsla.key)
-        // The group counts in any of the symbol's permission sets.
-        assertEquals("MU", markets.getValue("MUBUSDT").underlying)
-        // Ending in B is not enough, and the group alone is not enough either.
-        for (symbol in listOf("BNBUSDT", "ARBUSDT", "GROUPUSDT", "NOSETSUSDT", "NULLSETSUSDT")) {
+        for (symbol in listOf("TSLABUSDT", "MUBUSDT", "BNBUSDT", "ARBUSDT", "GROUPUSDT", "NOSETSUSDT", "NULLSETSUSDT")) {
             val market = markets.getValue(symbol)
             assertEquals(symbol, AssetClass.CRYPTO, market.assetClass)
             assertNull(symbol, market.underlying)

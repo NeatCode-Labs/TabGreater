@@ -1,16 +1,16 @@
 # Privacy policy
 
-*TabGreater, by NeatCode Labs — last updated 2026-10-06*
+*TabGreater, by NeatCode Labs — last updated 2026-11-19*
 
 ## What TabGreater collects
 
-Nothing. The app has no server, no account, no analytics, no crash reporting and no advertising. No data about you or your device is sent to NeatCode Labs.
+Nothing. The app has no server, no account, no analytics, no crash reporting and no advertising.
 
 ## What leaves your device
 
-TabGreater fetches prices and candles **directly** from the public market-data APIs of the exchanges you use (Binance, Gate.io, Kraken, KuCoin, MEXC). Each of those requests carries, as every internet request does, your IP address, and it names the trading pairs you are watching. The app also downloads the five exchanges' lists of markets, which the pair search runs on, at most once a day and again after an install or update; those requests name no pair, and what you type into the search never leaves the device. The exchanges receive and process that information under their own terms of service and privacy policies; NeatCode Labs has no access to it and no control over it. All connections use HTTPS / WSS.
+TabGreater fetches prices and candles **directly** from the public market-data APIs of the exchanges you use (Binance, Gate.io, Hyperliquid, Kraken, KuCoin, MEXC). Each of those requests carries, as every internet request does, your IP address, and it names the trading pairs you are watching. The app also downloads the exchanges’ public catalogues for pair search. It checks Hyperliquid more frequently because its event markets expire. What you type into the search stays on the device. The exchanges receive and process that information under their own terms of service and privacy policies; NeatCode Labs has no access to it and no control over it. All connections use HTTPS / WSS.
 
-The crypto "popular pairs" shortcuts on the add-pair screen and in the widget setup come from CoinGecko's public market-cap ranking (https://www.coingecko.com): the app asks for that list at most once a day, and that request, like any other, carries your IP address. The stock tickers offered under *Stocks* are ranked on the device from the exchanges' lists of markets. Nothing else leaves the device. The chart runs in a WebView that loads only files bundled inside the app.
+The crypto "popular pairs" shortcuts on the add-pair screen and in the widget setup come from CoinGecko's public market-cap ranking (https://www.coingecko.com): the app asks for that list at most once a day, and that request, like any other, carries your IP address. The chart runs in a WebView that loads only files bundled inside the app.
 
 ## What stays on your device
 

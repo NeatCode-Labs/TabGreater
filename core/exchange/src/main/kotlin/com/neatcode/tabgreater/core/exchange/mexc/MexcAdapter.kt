@@ -8,8 +8,6 @@ import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
-import com.neatcode.tabgreater.core.exchange.StockTokens
-import com.neatcode.tabgreater.core.exchange.classified
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.exchange.ws.SubscriptionBook
 import com.neatcode.tabgreater.core.model.Candle
@@ -128,13 +126,7 @@ class MexcAdapter(
                     // and there is no tick size to report.
                     pricePrecision = dto.quotePrecision,
                     tickSize = null,
-                ).classified(
-                    StockTokens.mexc(
-                        baseAsset = dto.baseAsset,
-                        fullName = dto.fullName.orEmpty(),
-                        contractAddress = dto.contractAddress.orEmpty(),
-                        conceptPlates = dto.conceptPlates.orEmpty(),
-                    ),
+                    description = dto.fullName?.takeIf(String::isNotBlank),
                 )
             }
             .toList()
@@ -516,12 +508,8 @@ private data class SymbolDto(
     val quoteAsset: String = "",
     val quotePrecision: Int = DEFAULT_QUOTE_PRECISION,
     val isSpotTradingAllowed: Boolean = false,
-    /** `"Tesla xStock"`, `"Apple (Ondo)"`, `"Bitcoin"`. */
+    /** Exchange-provided asset name used by local search. */
     val fullName: String? = null,
-    /** Token contract or mint address; `""` for native coins. */
-    val contractAddress: String? = null,
-    /** MEXC's themed tags, e.g. `["Innovation","Tokenized Stocks"]`. */
-    val conceptPlates: List<String>? = null,
 )
 
 /**

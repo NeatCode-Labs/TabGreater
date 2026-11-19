@@ -1,6 +1,8 @@
 package com.neatcode.tabgreater.ui.watchlist
 
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.core.model.Market
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.SortMode
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.Ticker
@@ -11,6 +13,7 @@ import com.neatcode.tabgreater.ui.testing.FakeSparklineRepository
 import com.neatcode.tabgreater.ui.testing.FakeWatchlistRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -69,6 +72,133 @@ class WatchlistViewModelTest {
         assertEquals(listOf(btc, eth, sol), sparklines.starts.map { it.first })
         assertEquals(1, sparklines.startsFor(btc))
         assertEquals(1, sparklines.startsFor(eth))
+    }
+
+    @Test
+    fun `daily outcome expiry refreshes and retries before rolling every list while preserving row identity`() = runTest(dispatcher) {
+        val main = watchlists.ensureDefault()
+        val second = watchlists.createWatchlist("Second")
+        val keep = btc
+        val btcOldKey = MarketKey("hyperliquid:OUTCOME_95_SIDE_0/USDC")
+        val solOldKey = MarketKey("hyperliquid:OUTCOME_96_SIDE_1/USDC")
+        val btcNextKey = MarketKey("hyperliquid:OUTCOME_105_SIDE_0/USDC")
+        val solNextKey = MarketKey("hyperliquid:OUTCOME_106_SIDE_1/USDC")
+        val expiry = java.time.Instant.parse("2026-11-20T06:00:00Z").toEpochMilli()
+        val nextExpiry = expiry + DAY_MS
+        val btcSeries = "priceBinary:BTC:1d:21600000"
+        val solSeries = "priceBinary:SOL:1d:21600000"
+        val btcOld = dailyOutcome(btcOldKey, "95", "Yes", expiry, btcSeries)
+        val solOld = dailyOutcome(solOldKey, "96", "No", expiry, solSeries)
+        val btcNext = dailyOutcome(btcNextKey, "105", "Yes", nextExpiry, btcSeries)
+        val solNext = dailyOutcome(solNextKey, "106", "No", nextExpiry, solSeries)
+        markets.put(btcOld)
+        markets.put(solOld)
+        watchlists.addItems(main, listOf(keep, btcOldKey))
+        watchlists.addItems(second, listOf(solOldKey))
+        val btcItemBefore = watchlists.items(main).last()
+        val solItemBefore = watchlists.items(second).single()
+        watchlists.setAccentColor(btcItemBefore.id, 0xFF38A4D8L)
+        watchlists.setAccentColor(solItemBefore.id, 0xFFB877D8L)
+
+        var now = expiry - 1L
+        var forcedRefreshes = 0
+        markets.onRefreshMarket = { exchange, force ->
+            if (exchange == com.neatcode.tabgreater.core.model.ExchangeId.HYPERLIQUID && force) {
+                forcedRefreshes++
+                if (forcedRefreshes == 2) {
+                    markets.put(btcNext)
+                    markets.put(solNext)
+                }
+            }
+        }
+        val vm = viewModel(nowEpochMs = { now }, outcomeRolloverRetryMs = 5_000L)
+        vm.onForeground()
+        runCurrent()
+        assertEquals(0, forcedRefreshes)
+
+        now = expiry
+        advanceTimeBy(1L)
+        runCurrent()
+        assertEquals(1, forcedRefreshes)
+        assertEquals(btcOldKey, watchlists.items(main).last().key)
+        assertEquals(solOldKey, watchlists.items(second).single().key)
+
+        now = expiry + 5_000L
+        advanceTimeBy(5_000L)
+        runCurrent()
+
+        assertEquals(2, forcedRefreshes)
+        val btcItemAfter = watchlists.items(main).last()
+        val solItemAfter = watchlists.items(second).single()
+        assertEquals(btcNextKey, btcItemAfter.key)
+        assertEquals(solNextKey, solItemAfter.key)
+        assertEquals(btcItemBefore.id, btcItemAfter.id)
+        assertEquals(btcItemBefore.position, btcItemAfter.position)
+        assertEquals(0xFF38A4D8L, btcItemAfter.accentColor)
+        assertEquals(solItemBefore.id, solItemAfter.id)
+        assertEquals(solItemBefore.position, solItemAfter.position)
+        assertEquals(0xFFB877D8L, solItemAfter.accentColor)
+        assertEquals("Yes", markets.getMarket(btcItemAfter.key)?.outcomeSide)
+        assertEquals("No", markets.getMarket(solItemAfter.key)?.outcomeSide)
+        assertEquals(nextExpiry, markets.getMarket(btcItemAfter.key)?.expiresAt)
+        assertEquals(nextExpiry, markets.getMarket(solItemAfter.key)?.expiresAt)
+
+        vm.onBackground()
+    }
+
+    @Test
+    fun `resume after expiry forces catalogue refresh before adopting a confirmed contract`() = runTest(dispatcher) {
+        val listId = watchlists.ensureDefault()
+        val oldKey = MarketKey("hyperliquid:OUTCOME_95_SIDE_0/USDC")
+        val nextKey = MarketKey("hyperliquid:OUTCOME_105_SIDE_0/USDC")
+        val expiry = java.time.Instant.parse("2026-11-20T06:00:00Z").toEpochMilli()
+        val series = "priceBinary:BTC:1d:21600000"
+        markets.put(dailyOutcome(oldKey, "95", "Yes", expiry, series))
+        markets.put(dailyOutcome(nextKey, "105", "Yes", expiry + DAY_MS, series))
+        watchlists.addItems(listId, listOf(oldKey))
+        var forcedRefreshes = 0
+        markets.onRefreshMarket = { _, force -> if (force) forcedRefreshes++ }
+        val vm = viewModel(nowEpochMs = { expiry + 1L })
+
+        vm.onBackground()
+        runCurrent()
+        assertEquals(oldKey, watchlists.items(listId).single().key)
+        vm.onForeground()
+        runCurrent()
+
+        assertEquals(1, forcedRefreshes)
+        assertEquals(nextKey, watchlists.items(listId).single().key)
+        vm.onBackground()
+    }
+
+    @Test
+    fun `outcome more than one day ahead is held until it enters the confirmed rollover window`() = runTest(dispatcher) {
+        val listId = watchlists.ensureDefault()
+        val oldKey = MarketKey("hyperliquid:OUTCOME_95_SIDE_0/USDC")
+        val nextKey = MarketKey("hyperliquid:OUTCOME_105_SIDE_0/USDC")
+        val expiry = java.time.Instant.parse("2026-11-20T06:00:00Z").toEpochMilli()
+        val series = "priceBinary:BTC:1d:21600000"
+        val nextExpiry = expiry + 3 * DAY_MS
+        markets.put(dailyOutcome(oldKey, "95", "Yes", expiry, series))
+        markets.put(dailyOutcome(nextKey, "105", "Yes", nextExpiry, series))
+        watchlists.addItems(listId, listOf(oldKey))
+        var now = expiry
+        var forcedRefreshes = 0
+        markets.onRefreshMarket = { _, force -> if (force) forcedRefreshes++ }
+        val vm = viewModel(nowEpochMs = { now })
+        vm.onForeground()
+        runCurrent()
+
+        assertEquals(1, forcedRefreshes)
+        assertEquals(oldKey, watchlists.items(listId).single().key)
+
+        now = nextExpiry - DAY_MS
+        advanceTimeBy(nextExpiry - DAY_MS - expiry)
+        runCurrent()
+
+        assertEquals(2, forcedRefreshes)
+        assertEquals(nextKey, watchlists.items(listId).single().key)
+        vm.onBackground()
     }
 
     @Test
@@ -242,7 +372,7 @@ class WatchlistViewModelTest {
         // The first quote is never held back: an empty tile is worse than a slightly stale one.
         live.tickers.value = mapOf(btc to ticker(100.0))
         advanceUntilIdle()
-        assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("100", vm.uiState.value.tiles.single().priceText)
 
         // The next quote is not held either — one free frame per market, so a fresh price never
         // waits out a window — and *that* one opens the 5 s window the three ticks after it
@@ -259,7 +389,7 @@ class WatchlistViewModelTest {
         assertEquals("nothing may reach the grid inside the window", redrawsBefore, prices.size)
 
         advanceUntilIdle()
-        assertEquals("104.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("104", vm.uiState.value.tiles.single().priceText)
         assertEquals(redrawsBefore + 1, prices.size)
     }
 
@@ -274,11 +404,11 @@ class WatchlistViewModelTest {
 
         live.tickers.value = mapOf(btc to ticker(100.0))
         advanceUntilIdle()
-        assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("100", vm.uiState.value.tiles.single().priceText)
 
         live.tickers.value = mapOf(btc to ticker(101.0))
         advanceTimeBy(1_100)
-        assertEquals("101.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("101", vm.uiState.value.tiles.single().priceText)
     }
 
     @Test
@@ -304,7 +434,7 @@ class WatchlistViewModelTest {
 
         val tile = vm.uiState.value.tiles.single()
         assertEquals(sol, tile.key)
-        assertEquals("20.00", tile.priceText)
+        assertEquals("20", tile.priceText)
         assertNotNull("the mini-chart must arrive with the price, not a window later", tile.spark)
     }
 
@@ -317,14 +447,14 @@ class WatchlistViewModelTest {
         val vm = viewModel()
         collectState(vm)
         runCurrent()
-        assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("100", vm.uiState.value.tiles.single().priceText)
 
         // The exchange answers 1 s into the 5 s window that stale value opened.
         advanceTimeBy(1_000)
         live.tickers.value = mapOf(btc to ticker(101.0))
         runCurrent()
 
-        assertEquals("101.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("101", vm.uiState.value.tiles.single().priceText)
         assertEquals("no window may be spent on prices the user is already looking at", 1_000L, testScheduler.currentTime)
     }
 
@@ -336,7 +466,7 @@ class WatchlistViewModelTest {
         val vm = viewModel()
         collectState(vm)
         runCurrent()
-        assertEquals("100.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("100", vm.uiState.value.tiles.single().priceText)
 
         // A ticker stream pushes an update roughly once a second whether or not a trade happened:
         // a new exchange timestamp on an unchanged price draws nothing and must cost nothing.
@@ -348,7 +478,7 @@ class WatchlistViewModelTest {
         live.tickers.value = mapOf(btc to ticker(101.0))
         runCurrent()
 
-        assertEquals("101.00", vm.uiState.value.tiles.single().priceText)
+        assertEquals("101", vm.uiState.value.tiles.single().priceText)
         assertEquals(800L, testScheduler.currentTime)
     }
 
@@ -370,8 +500,8 @@ class WatchlistViewModelTest {
         runCurrent()
 
         val prices = vm.uiState.value.tiles.associate { it.key to it.priceText }
-        assertEquals("101.00", prices[btc])
-        assertEquals("101.00", prices[eth])
+        assertEquals("101", prices[btc])
+        assertEquals("101", prices[eth])
         assertEquals(1_000L, testScheduler.currentTime)
     }
 
@@ -391,16 +521,45 @@ class WatchlistViewModelTest {
     private fun ticker(last: Double, key: MarketKey = btc) =
         Ticker(key = key, last = last, changePct24h = 1.0, timestamp = 0L)
 
-    private fun viewModel() = WatchlistViewModel(
+    private fun viewModel(
+        nowEpochMs: () -> Long = System::currentTimeMillis,
+        outcomeRolloverRetryMs: Long = 300_000L,
+    ) = WatchlistViewModel(
         watchlistRepository = watchlists,
         marketRepository = markets,
         sparklineRepository = sparklines,
         marketDataRepository = live,
         settingsStore = settings,
+        marketCatalogRefreshSignals = emptyFlow(),
+        nowEpochMs = nowEpochMs,
+        outcomeRolloverRetryMs = outcomeRolloverRetryMs,
+    )
+
+    private fun dailyOutcome(
+        key: MarketKey,
+        outcomeId: String,
+        side: String,
+        expiresAt: Long,
+        seriesId: String,
+    ) = Market(
+        key = key,
+        nativeSymbol = "#${outcomeId}${if (side == "No") 1 else 0}",
+        pricePrecision = 4,
+        instrumentKind = InstrumentKind.OUTCOME,
+        displayName = "BTC binary · $side",
+        description = "class:priceBinary|underlying:BTC|expiry:$expiresAt|targetPrice:63330|period:1d",
+        outcomeId = outcomeId,
+        outcomeSide = side,
+        expiresAt = expiresAt,
+        rolloverSeriesId = seriesId,
     )
 
     /** `uiState` is `WhileSubscribed`, so every test needs a collector that outlives the body. */
     private fun TestScope.collectState(vm: WatchlistViewModel) {
         backgroundScope.launch { vm.uiState.collect { } }
+    }
+
+    private companion object {
+        const val DAY_MS = 24L * 60 * 60 * 1_000
     }
 }

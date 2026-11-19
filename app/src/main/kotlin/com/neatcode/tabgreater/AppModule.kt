@@ -5,6 +5,7 @@ import com.neatcode.tabgreater.core.data.APP_SCOPE
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.binance.BinanceAdapter
 import com.neatcode.tabgreater.core.exchange.gate.GateAdapter
+import com.neatcode.tabgreater.core.exchange.hyperliquid.HyperliquidAdapter
 import com.neatcode.tabgreater.core.exchange.kraken.KrakenAdapter
 import com.neatcode.tabgreater.core.exchange.kucoin.KuCoinAdapter
 import com.neatcode.tabgreater.core.exchange.mexc.MexcAdapter
@@ -48,8 +49,19 @@ val appModule = module {
     single<ExchangeAdapter>(named(ExchangeId.MEXC.id)) {
         MexcAdapter(client = get(), scope = get(APP_SCOPE), logger = exchangeLogger("MEXC"))
     } bind ExchangeAdapter::class
+    single<ExchangeAdapter>(named(ExchangeId.HYPERLIQUID.id)) {
+        HyperliquidAdapter(client = get(), scope = get(APP_SCOPE), logger = exchangeLogger("Hyperliquid"))
+    } bind ExchangeAdapter::class
 
-    viewModelOf(::WatchlistViewModel)
+    viewModel {
+        WatchlistViewModel(
+            watchlistRepository = get(),
+            marketRepository = get(),
+            sparklineRepository = get(),
+            marketDataRepository = get(),
+            settingsStore = get(),
+        )
+    }
     viewModelOf(::WatchlistManagerViewModel)
 
     // Settings reads the live layer through three narrow seams (a StateFlow and two functions)

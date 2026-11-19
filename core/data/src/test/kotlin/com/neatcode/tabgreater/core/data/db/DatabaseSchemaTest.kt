@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,8 +23,8 @@ import java.lang.reflect.Proxy
  * emulator (install the previous release over its own data, update, relaunch); this test pins
  * what the JVM can check: the exported v2 schema holds `chart_drawings` with exactly the three
  * columns, every v1 table is unchanged, and [DatabaseMigrations.MIGRATION_1_2] creates the new
- * table with Room's own SQL; v3 adds exactly `asset_class` and `underlying` to `markets`, and
- * [DatabaseMigrations.MIGRATION_2_3] adds them with the definitions of a fresh install.
+ * table with Room's own SQL; v3 adds the legacy token fields, v4 adds category and outcome
+ * metadata, and v5 adds the recurring outcome family id.
  */
 class DatabaseSchemaTest {
 
@@ -57,6 +58,9 @@ class DatabaseSchemaTest {
                 defaultValue = it["defaultValue"]?.jsonPrimitive?.content,
             )
         }
+
+    private fun JsonObject.indexNames(): Set<String> =
+        getValue("indices").jsonArray.map { it.jsonObject.getValue("name").jsonPrimitive.content }.toSet()
 
     /** Runs [migration] against a stand-in database that only records the SQL it executes. */
     private fun executedSql(migration: Migration): List<String> {
@@ -168,9 +172,140 @@ class DatabaseSchemaTest {
     }
 
     @Test
+    fun `version 4 appends category and searchable event metadata to markets`() {
+        val v3 = schema(3).entity(MARKETS) ?: error("markets missing from 3.json")
+        val v4 = schema(4).entity(MARKETS) ?: error("markets missing from 4.json")
+        assertEquals(4, schema(4).getValue("version").jsonPrimitive.int)
+
+        val columns = v4.columns()
+        assertEquals(Column("TEXT", notNull = true, defaultValue = "'crypto'"), columns["category"])
+        assertEquals(Column("TEXT", notNull = true, defaultValue = "'spot'"), columns["instrument_kind"])
+        listOf("display_name", "description", "unit", "venue", "event_id", "outcome_id", "outcome_side")
+            .forEach { assertEquals(Column("TEXT", notNull = false, defaultValue = null), columns[it]) }
+        assertEquals(Column("INTEGER", notNull = false, defaultValue = null), columns["expires_at"])
+        val added = setOf(
+            "category", "instrument_kind", "display_name", "description", "unit", "venue",
+            "event_id", "outcome_id", "outcome_side", "expires_at",
+        )
+        assertEquals(v3.columns(), columns - added)
+        assertEquals(v3.indexNames() + setOf("index_markets_category", "index_markets_instrument_kind"), v4.indexNames())
+        assertEquals(v3["primaryKey"], v4["primaryKey"])
+
+        val appended = listOf(
+            DatabaseMigrations.MARKETS_CATEGORY_COLUMN,
+            DatabaseMigrations.MARKETS_INSTRUMENT_KIND_COLUMN,
+            DatabaseMigrations.MARKETS_DISPLAY_NAME_COLUMN,
+            DatabaseMigrations.MARKETS_DESCRIPTION_COLUMN,
+            DatabaseMigrations.MARKETS_UNIT_COLUMN,
+            DatabaseMigrations.MARKETS_VENUE_COLUMN,
+            DatabaseMigrations.MARKETS_EVENT_ID_COLUMN,
+            DatabaseMigrations.MARKETS_OUTCOME_ID_COLUMN,
+            DatabaseMigrations.MARKETS_OUTCOME_SIDE_COLUMN,
+            DatabaseMigrations.MARKETS_EXPIRES_AT_COLUMN,
+        ).joinToString(", ")
+        assertEquals(
+            v3.createSql(MARKETS).replace(", PRIMARY KEY(", ", $appended, PRIMARY KEY("),
+            v4.createSql(MARKETS),
+        )
+    }
+
+    @Test
+    fun `the 3 to 4 migration matches the new columns and classifies cached legacy instruments`() {
+        val columns = listOf(
+            DatabaseMigrations.MARKETS_CATEGORY_COLUMN,
+            DatabaseMigrations.MARKETS_INSTRUMENT_KIND_COLUMN,
+            DatabaseMigrations.MARKETS_DISPLAY_NAME_COLUMN,
+            DatabaseMigrations.MARKETS_DESCRIPTION_COLUMN,
+            DatabaseMigrations.MARKETS_UNIT_COLUMN,
+            DatabaseMigrations.MARKETS_VENUE_COLUMN,
+            DatabaseMigrations.MARKETS_EVENT_ID_COLUMN,
+            DatabaseMigrations.MARKETS_OUTCOME_ID_COLUMN,
+            DatabaseMigrations.MARKETS_OUTCOME_SIDE_COLUMN,
+            DatabaseMigrations.MARKETS_EXPIRES_AT_COLUMN,
+        )
+        val statements = executedSql(DatabaseMigrations.MIGRATION_3_4)
+        assertEquals(
+            columns.map { "ALTER TABLE markets ADD COLUMN $it" } +
+                listOf(
+                    "CREATE INDEX IF NOT EXISTS `index_markets_category` ON `markets` (`category`)",
+                    "CREATE INDEX IF NOT EXISTS `index_markets_instrument_kind` ON `markets` (`instrument_kind`)",
+                ) + statements.last(),
+            statements,
+        )
+        val classify = statements.last()
+        assertEquals("UPDATE markets SET category = 'unclassified', updated_at = 0", classify)
+        assertEquals(3, DatabaseMigrations.MIGRATION_3_4.startVersion)
+        assertEquals(4, DatabaseMigrations.MIGRATION_3_4.endVersion)
+    }
+
+    @Test
+    fun `every other v3 table survives into v4 unchanged`() {
+        val v3 = schema(3)
+        val v4 = schema(4)
+        assertEquals(v3.tableNames(), v4.tableNames())
+        for (table in v3.tableNames() - MARKETS) {
+            assertEquals("$table changed between v3 and v4", v3.entity(table), v4.entity(table))
+        }
+    }
+
+    @Test
+    fun `version 5 appends the recurring outcome family id and lookup index`() {
+        val v4 = schema(4).entity(MARKETS) ?: error("markets missing from 4.json")
+        val v5 = schema(5).entity(MARKETS) ?: error("markets missing from 5.json")
+        assertEquals(5, schema(5).getValue("version").jsonPrimitive.int)
+
+        assertEquals(
+            Column("TEXT", notNull = false, defaultValue = null),
+            v5.columns()["rollover_series_id"],
+        )
+        assertEquals(v4.columns(), v5.columns() - "rollover_series_id")
+        assertEquals(
+            v4.indexNames() + "index_markets_rollover_series_id_outcome_side_expires_at",
+            v5.indexNames(),
+        )
+        assertEquals(v4["primaryKey"], v5["primaryKey"])
+        assertEquals(
+            v4.createSql(MARKETS).replace(
+                ", PRIMARY KEY(",
+                ", ${DatabaseMigrations.MARKETS_ROLLOVER_SERIES_ID_COLUMN}, PRIMARY KEY(",
+            ),
+            v5.createSql(MARKETS),
+        )
+    }
+
+    @Test
+    fun `the 4 to 5 migration matches the fresh schema and invalidates old catalogue rows`() {
+        assertEquals(
+            listOf(
+                "ALTER TABLE markets ADD COLUMN ${DatabaseMigrations.MARKETS_ROLLOVER_SERIES_ID_COLUMN}",
+                "CREATE INDEX IF NOT EXISTS `index_markets_rollover_series_id_outcome_side_expires_at` " +
+                    "ON `markets` (`rollover_series_id`, `outcome_side`, `expires_at`)",
+                "UPDATE markets SET updated_at = 0",
+            ),
+            executedSql(DatabaseMigrations.MIGRATION_4_5),
+        )
+        assertEquals(4, DatabaseMigrations.MIGRATION_4_5.startVersion)
+        assertEquals(5, DatabaseMigrations.MIGRATION_4_5.endVersion)
+    }
+
+    @Test
+    fun `every other v4 table survives into v5 unchanged`() {
+        val v4 = schema(4)
+        val v5 = schema(5)
+        assertEquals(v4.tableNames(), v5.tableNames())
+        for (table in v4.tableNames() - MARKETS) {
+            assertEquals("$table changed between v4 and v5", v4.entity(table), v5.entity(table))
+        }
+    }
+
+    @Test
     fun `every version step has a migration`() {
-        val steps = DatabaseMigrations.ALL.map { it.startVersion to it.endVersion }
-        assertEquals(listOf(1 to 2, 2 to 3), steps)
+        val migrations = DatabaseMigrations.ALL.toList() + TabGreaterDatabase_Impl().createAutoMigrations(emptyMap())
+        val steps = migrations.map { it.startVersion to it.endVersion }
+        val oldMarkets = requireNotNull(schema(5).entity(MARKETS))
+        val newMarkets = requireNotNull(schema(6).entity(MARKETS))
+        assertEquals(oldMarkets.columns() - "category", newMarkets.columns())
+        assertEquals(oldMarkets.indexNames() - "index_markets_category", newMarkets.indexNames())
         // The newest exported schema is the last migration's target: a version bump without a
         // migration exports a schema this list does not reach.
         val exported = schemaDir.listFiles().orEmpty().mapNotNull { it.name.removeSuffix(".json").toIntOrNull() }.sorted()

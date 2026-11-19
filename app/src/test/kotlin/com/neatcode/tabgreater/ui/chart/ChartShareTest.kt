@@ -34,6 +34,8 @@ class ChartShareTest {
         assertEquals("KRAKEN · BTC/EUR · 1D · 2026-08-23 15:52", ChartShare.footerText(key, Timeframe.D1, now, zone))
         assertEquals("GATE.IO · ETH/USDT · 15m · 2026-08-23 15:52",
             ChartShare.footerText(MarketKey("gate:ETH/USDT"), Timeframe.M15, now, zone))
+        assertEquals("HYPERLIQUID · xyz:ANT · 1D · 2026-08-23 15:52",
+            ChartShare.footerText(MarketKey("hyperliquid:HIP3_XYZ_ANT/USD"), Timeframe.D1, now, zone, "xyz:ANT"))
     }
 
     @Test

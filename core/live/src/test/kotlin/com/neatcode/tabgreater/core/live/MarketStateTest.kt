@@ -17,4 +17,12 @@ class MarketStateTest {
     @Test fun `missing data remains missing`() {
         assertEquals(PriceFreshness.MISSING, MarketState().aged(0).freshness)
     }
+
+    @Test fun `reading an old Hyperliquid execution does not make its price fresh`() {
+        val oldTrade = Ticker(MarketKey("hyperliquid:PERP_BTC/USD"), 75.0, timestamp = 1_000_000L)
+        val received = MarketState(oldTrade, confirmedAtElapsedMs = 8_000L, confirmedAtEpochMs = 1_590_000L)
+        assertEquals(PriceFreshness.CURRENT, received.aged(8_000L).freshness)
+        assertEquals(PriceFreshness.OLD, received.aged(18_000L).freshness)
+        assertEquals(PriceFreshness.OLD, received.copy(confirmedAtEpochMs = 1_700_000L).aged(8_000L).freshness)
+    }
 }

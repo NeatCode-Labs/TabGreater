@@ -92,8 +92,11 @@ val dataModule = module {
     single<WatchlistRepository> { RoomWatchlistRepository(get(), get(), get()) }
     single<MarketRepository> {
         // The APK is rewritten by every install and update, so its timestamp marks the point
-        // before which the cached instrument lists were classified by an older build.
-        val apk = File(androidContext().applicationInfo.sourceDir)
+        // before which the cached instrument lists were fetched by an older build.
+        val context = androidContext()
+        // Discard the old prototype's downloaded category file on upgrade.
+        context.deleteFile("market-classification-v1.json")
+        val apk = File(context.applicationInfo.sourceDir)
         RoomMarketRepository(get(), get(), catalogueValidSince = { apk.lastModified() })
     }
     single<SparklineRepository> { RoomSparklineRepository(get(), get(), get()) }

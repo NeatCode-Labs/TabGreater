@@ -1,11 +1,16 @@
 package com.neatcode.tabgreater.core.data.db
 
 import android.content.Context
+import androidx.room.AutoMigration
+import androidx.room.DeleteColumn
+import androidx.room.migration.AutoMigrationSpec
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
 
 @Database(
     entities = [
@@ -16,7 +21,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TickerSnapshotEntity::class,
         ChartDrawingEntity::class,
     ],
-    version = 3,
+    version = 6,
+    autoMigrations = [AutoMigration(from = 5, to = 6, spec = DropMarketCategory::class)],
     exportSchema = true,
 )
 abstract class TabGreaterDatabase : RoomDatabase() {
@@ -40,7 +46,23 @@ abstract class TabGreaterDatabase : RoomDatabase() {
     }
 }
 
-/** Every schema step, in order. Each one must match the exported `schemas/<version>.json`. */
+@DeleteColumn(tableName = "markets", columnName = "category")
+class DropMarketCategory : AutoMigrationSpec {
+    override fun onPostMigrate(connection: SQLiteConnection) {
+        // Older builds included the category in generated perp descriptions, even for offline or delisted rows.
+        connection.execSQL(
+            """
+            UPDATE markets SET description =
+                CASE WHEN unit IS NULL OR unit = 'USD per contract unit' THEN '' ELSE unit || ' · ' END
+                || 'Perpetual contract'
+                || CASE WHEN venue IS NULL OR venue IN ('', 'HyperCore') THEN '' ELSE ' · Builder venue ' || venue END
+            WHERE exchange = 'hyperliquid' AND instrument_kind = 'perpetual' AND description LIKE '% perpetual contract%'
+            """.trimIndent(),
+        )
+    }
+}
+
+/** Every explicit schema step, in order. Each one must match the exported `schemas/<version>.json`. */
 object DatabaseMigrations {
 
     /**
@@ -82,5 +104,53 @@ object DatabaseMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+    const val MARKETS_CATEGORY_COLUMN: String = "`category` TEXT NOT NULL DEFAULT 'crypto'"
+    const val MARKETS_INSTRUMENT_KIND_COLUMN: String = "`instrument_kind` TEXT NOT NULL DEFAULT 'spot'"
+    const val MARKETS_DISPLAY_NAME_COLUMN: String = "`display_name` TEXT"
+    const val MARKETS_DESCRIPTION_COLUMN: String = "`description` TEXT"
+    const val MARKETS_UNIT_COLUMN: String = "`unit` TEXT"
+    const val MARKETS_VENUE_COLUMN: String = "`venue` TEXT"
+    const val MARKETS_EVENT_ID_COLUMN: String = "`event_id` TEXT"
+    const val MARKETS_OUTCOME_ID_COLUMN: String = "`outcome_id` TEXT"
+    const val MARKETS_OUTCOME_SIDE_COLUMN: String = "`outcome_side` TEXT"
+    const val MARKETS_EXPIRES_AT_COLUMN: String = "`expires_at` INTEGER"
+
+    /** 3 → 4: stores every market category and the descriptive metadata required by outcome markets. */
+    val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            listOf(
+                MARKETS_CATEGORY_COLUMN,
+                MARKETS_INSTRUMENT_KIND_COLUMN,
+                MARKETS_DISPLAY_NAME_COLUMN,
+                MARKETS_DESCRIPTION_COLUMN,
+                MARKETS_UNIT_COLUMN,
+                MARKETS_VENUE_COLUMN,
+                MARKETS_EVENT_ID_COLUMN,
+                MARKETS_OUTCOME_ID_COLUMN,
+                MARKETS_OUTCOME_SIDE_COLUMN,
+                MARKETS_EXPIRES_AT_COLUMN,
+            ).forEach { column -> db.execSQL("ALTER TABLE markets ADD COLUMN $column") }
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_markets_category` ON `markets` (`category`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_markets_instrument_kind` ON `markets` (`instrument_kind`)")
+            // Old routing flags do not distinguish stocks from ETFs or crypto from fiat.
+            db.execSQL("UPDATE markets SET category = 'unclassified', updated_at = 0")
+        }
+    }
+
+    const val MARKETS_ROLLOVER_SERIES_ID_COLUMN: String = "`rollover_series_id` TEXT"
+
+    /** 4 → 5: cache the stable family identity used to find a confirmed next daily outcome. */
+    val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE markets ADD COLUMN $MARKETS_ROLLOVER_SERIES_ID_COLUMN")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_markets_rollover_series_id_outcome_side_expires_at` " +
+                    "ON `markets` (`rollover_series_id`, `outcome_side`, `expires_at`)",
+            )
+            // Existing rows lack the new series id; re-fetch the catalogue after an update.
+            db.execSQL("UPDATE markets SET updated_at = 0")
+        }
+    }
+
+    val ALL: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

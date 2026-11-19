@@ -99,6 +99,7 @@ data class ChartSymbol(
     val instId: String,
     val pricePrecision: Int,
     val volumePrecision: Int,
+    val displayLabel: String? = null,
 )
 
 /** [Market] as the symbol object `chart.js` passes back with every data-loader call. */
@@ -109,6 +110,7 @@ fun Market.toChartSymbol(volumePrecision: Int = DEFAULT_VOLUME_PRECISION): Chart
         instId = nativeSymbol,
         pricePrecision = pricePrecision,
         volumePrecision = volumePrecision,
+        displayLabel = outcomeSide?.let { "${instrumentKind.label} · $it" } ?: displayName,
     )
 
 /** Base volumes are shown with 2 decimals; no exchange reports a base-volume precision. */

@@ -137,6 +137,16 @@ class FakeWatchlistRepository : WatchlistRepository {
         }
     }
 
+    override suspend fun rolloverItem(itemId: Long, expectedKey: MarketKey, newKey: MarketKey): Boolean {
+        val current = items.value.firstOrNull { it.id == itemId && it.key == expectedKey } ?: return false
+        if (items.value.any {
+                it.id != itemId && it.watchlistId == current.watchlistId && it.key == newKey
+            }
+        ) return false
+        items.value = items.value.map { if (it.id == itemId) it.copy(key = newKey) else it }
+        return true
+    }
+
     override suspend fun removeItem(itemId: Long) = removeItems(listOf(itemId))
 
     override suspend fun removeItems(itemIds: Collection<Long>) {

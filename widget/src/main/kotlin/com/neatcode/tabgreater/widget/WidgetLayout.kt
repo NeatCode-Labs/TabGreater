@@ -240,7 +240,8 @@ internal fun headerRefWidthDp(hasBadge: Boolean, pair: String, fontScale: Float)
 
 /** Width of `price … ±%` at the reference scale. */
 internal fun priceRefWidthDp(price: String, change: String, fontScale: Float): Float =
-    textWidthDp(price, REF_PRICE_SP, fontScale) + REF_PRICE_GAP_DP +
+    textWidthDp(price, REF_PRICE_SP, fontScale) +
+        REF_PRICE_GAP_DP +
         textWidthDp(change, REF_CHANGE_SP, fontScale)
 
 // ---- The plan -----------------------------------------------------------------------------------

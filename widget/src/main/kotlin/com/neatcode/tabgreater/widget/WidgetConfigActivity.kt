@@ -14,27 +14,23 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -44,6 +40,8 @@ import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -53,17 +51,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -73,7 +73,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -86,20 +85,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.neatcode.tabgreater.core.data.APP_SCOPE
 import com.neatcode.tabgreater.core.data.popular.DEFAULT_POPULAR_PAIRS
-import com.neatcode.tabgreater.core.data.popular.DEFAULT_POPULAR_STOCKS
 import com.neatcode.tabgreater.core.data.popular.PopularPairsRepository
 import com.neatcode.tabgreater.core.data.repo.MarketRepository
 import com.neatcode.tabgreater.core.data.repo.SparklineRepository
 import com.neatcode.tabgreater.core.live.LiveTickerLauncher
 import com.neatcode.tabgreater.core.live.MarketDataRepository
-import com.neatcode.tabgreater.core.model.AssetClass
+import com.neatcode.tabgreater.core.model.ExchangeId
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.TGColors
 import com.neatcode.tabgreater.core.model.TGDimens
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 import java.util.Locale
@@ -145,13 +148,16 @@ class WidgetConfigActivity : ComponentActivity() {
                 WidgetConfigScreen(
                     loadInitial = { configs.get(appWidgetId) },
                     refreshCatalogue = { markets.refreshAll() },
-                    search = { query, scope ->
-                        WidgetSearch.run(query, scope, SEARCH_LIMIT) { text, limit, assetClass ->
-                            markets.search(text, limit, assetClass)
-                        }
+                    searchPage = { query, limit, offset, filters ->
+                        markets.searchPage(
+                            query = query,
+                            limit = limit,
+                            offset = offset,
+                            instrumentKind = filters.instrumentKind,
+                            exchange = filters.source,
+                        )
                     },
                     loadPopularPairs = { popular.pairs() },
-                    loadPopularStocks = { markets.popularStockRoots().ifEmpty { DEFAULT_POPULAR_STOCKS } },
                     loadPreview = { key -> previewModel(key) },
                     onSave = { config -> save(appWidgetId, config) },
                     onCancel = { finish() },
@@ -168,10 +174,12 @@ class WidgetConfigActivity : ComponentActivity() {
      */
     private suspend fun previewModel(key: MarketKey): WidgetRenderModel? {
         val ticker = refresher.tickerFor(key) ?: return null
+        val market = refresher.marketFor(key)
         return WidgetModelFactory.build(
             config = WidgetConfig(key),
             ticker = ticker,
-            pricePrecision = refresher.precisionFor(key),
+            pricePrecision = market?.pricePrecision ?: refresher.precisionFor(key),
+            market = market,
             spark = refresher.sparkFor(key),
             now = System.currentTimeMillis(),
         )
@@ -195,9 +203,6 @@ class WidgetConfigActivity : ComponentActivity() {
         finish()
     }
 
-    private companion object {
-        const val SEARCH_LIMIT = 120
-    }
 }
 
 /**
@@ -212,9 +217,8 @@ class WidgetConfigActivity : ComponentActivity() {
 private fun WidgetConfigScreen(
     loadInitial: suspend () -> WidgetConfig?,
     refreshCatalogue: suspend () -> Unit,
-    search: suspend (String, AssetClass) -> ScopedResults,
+    searchPage: suspend (String, Int, Int, WidgetSearchFilters) -> List<Market>,
     loadPopularPairs: suspend () -> List<String>,
-    loadPopularStocks: suspend () -> List<String>,
     loadPreview: suspend (MarketKey) -> WidgetRenderModel?,
     onSave: (WidgetConfig) -> Unit,
     onCancel: () -> Unit,
@@ -229,15 +233,26 @@ private fun WidgetConfigScreen(
     val queryState = rememberTextFieldState()
     val query = queryState.text.toString()
     var seeded by rememberSaveable { mutableStateOf(false) }
-    // Crypto on every open, as in "+ Add pair"; saved only so a rotation keeps the open tab.
-    var scope by rememberSaveable { mutableStateOf(AssetClass.CRYPTO) }
+    var instrumentKind by rememberSaveable { mutableStateOf<InstrumentKind?>(null) }
+    var source by rememberSaveable { mutableStateOf<ExchangeId?>(null) }
+    var searchActive by rememberSaveable { mutableStateOf(false) }
+    val filters = remember(instrumentKind, source) {
+        WidgetSearchFilters(instrumentKind, source)
+    }
     var searchText by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf(ScopedResults(AssetClass.CRYPTO)) }
+    var results by remember { mutableStateOf(ScopedResults()) }
     var loading by remember { mutableStateOf(true) }
+    var searchLoading by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var hasMore by remember { mutableStateOf(true) }
+    var searchFailed by remember { mutableStateOf(false) }
+    var failedOffset by remember { mutableStateOf<Int?>(null) }
+    var searchGeneration by remember { mutableIntStateOf(0) }
+    var retryCount by remember { mutableIntStateOf(0) }
+    val resultsListState = rememberLazyListState()
     var preview by remember { mutableStateOf<WidgetRenderModel?>(null) }
     // Starts on the built-in list so the chip row never flashes empty, exactly as "+ Add pair" does.
     var popularPairs by remember { mutableStateOf(DEFAULT_POPULAR_PAIRS) }
-    var popularStocks by remember { mutableStateOf(DEFAULT_POPULAR_STOCKS) }
 
     val selected = selectedKey?.let { MarketKey.parseOrNull(it) }
 
@@ -252,10 +267,8 @@ private fun WidgetConfigScreen(
             seeded = true
         }
         // The cached catalogue's ranking first, the refreshed one after, as "+ Add pair" does.
-        popularStocks = loadPopularStocks()
         refreshCatalogue()
         loading = false
-        popularStocks = loadPopularStocks()
     }
 
     // Opening this sheet is the only thing that may refresh the ranking, and the repository still
@@ -276,8 +289,186 @@ private fun WidgetConfigScreen(
         searchText = text
     }
 
-    LaunchedEffect(searchText, scope, loading) {
-        results = search(searchText, scope)
+    LaunchedEffect(searchText, filters, retryCount) {
+        val generation = ++searchGeneration
+        val requestedQuery = searchText.trim()
+        val retryOffset = failedOffset?.takeIf {
+            it > 0 && results.query == requestedQuery && results.filters == filters && results.markets.isNotEmpty()
+        }
+
+        if (retryOffset != null) {
+            searchFailed = false
+            hasMore = true
+            loadingMore = true
+            try {
+                val retriedPage = WidgetSearch.page(
+                    text = requestedQuery,
+                    filters = filters,
+                    limit = SEARCH_PAGE_SIZE,
+                    offset = retryOffset,
+                    searchPage = { query, limit, offset, kind, exchange ->
+                        searchPage(query, limit, offset, WidgetSearchFilters(kind, exchange))
+                    },
+                )
+                if (generation == searchGeneration) {
+                    val knownKeys = results.markets.mapTo(hashSetOf()) { it.key }
+                    results = results.copy(
+                        markets = results.markets + retriedPage.markets.filter { it.key !in knownKeys },
+                        nextOffset = retriedPage.nextOffset,
+                    )
+                    failedOffset = null
+                    hasMore = retriedPage.markets.size == SEARCH_PAGE_SIZE
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (generation == searchGeneration) {
+                    failedOffset = retryOffset
+                    searchFailed = true
+                    hasMore = false
+                }
+            } finally {
+                if (generation == searchGeneration) loadingMore = false
+            }
+        } else {
+            failedOffset = null
+            results = ScopedResults(query = requestedQuery, filters = filters)
+            searchLoading = true
+            loadingMore = false
+            hasMore = true
+            searchFailed = false
+            // The empty state has no LazyColumn to lay out until this first read finishes.
+            resultsListState.requestScrollToItem(0)
+
+            try {
+                val firstPage = WidgetSearch.page(
+                    text = requestedQuery,
+                    filters = filters,
+                    limit = SEARCH_PAGE_SIZE,
+                    offset = 0,
+                    searchPage = { query, limit, offset, kind, exchange ->
+                        searchPage(query, limit, offset, WidgetSearchFilters(kind, exchange))
+                    },
+                )
+                if (generation != searchGeneration) return@LaunchedEffect
+                results = firstPage
+                hasMore = firstPage.markets.size == SEARCH_PAGE_SIZE
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (generation == searchGeneration) {
+                    failedOffset = 0
+                    searchFailed = true
+                    hasMore = false
+                }
+            } finally {
+                if (generation == searchGeneration) searchLoading = false
+            }
+        }
+
+    }
+
+    // Keep the scroll watcher alive when a cache is empty, so the first refreshed page can still
+    // start pagination as soon as it becomes visible.
+    LaunchedEffect(searchText, filters, searchGeneration) {
+        val requestedQuery = searchText.trim()
+        val requestedFilters = filters
+        val generation = searchGeneration
+        snapshotFlow {
+            ScrollRequestState(
+                lastVisibleIndex = resultsListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                loadingMore = loadingMore,
+                hasMore = hasMore,
+                resultCount = results.markets.size,
+                nextOffset = results.nextOffset,
+                query = results.query,
+                filters = results.filters,
+            )
+        }
+            .distinctUntilChanged()
+            .collect { state ->
+                if (generation != searchGeneration || state.query != requestedQuery || state.filters != requestedFilters ||
+                    state.loadingMore || !state.hasMore || state.resultCount == 0 ||
+                    state.lastVisibleIndex < state.resultCount - 1 - SEARCH_PREFETCH_THRESHOLD
+                ) return@collect
+
+                loadingMore = true
+                searchFailed = false
+                try {
+                    val nextPage = WidgetSearch.page(
+                        text = requestedQuery,
+                        filters = requestedFilters,
+                        limit = SEARCH_PAGE_SIZE,
+                        offset = state.nextOffset,
+                        searchPage = { query, limit, offset, kind, exchange ->
+                            searchPage(query, limit, offset, WidgetSearchFilters(kind, exchange))
+                        },
+                    )
+                    if (generation == searchGeneration) {
+                        val knownKeys = results.markets.mapTo(hashSetOf()) { it.key }
+                        results = results.copy(
+                            markets = results.markets + nextPage.markets.filter { it.key !in knownKeys },
+                            nextOffset = nextPage.nextOffset,
+                        )
+                        failedOffset = null
+                        hasMore = nextPage.markets.size == SEARCH_PAGE_SIZE
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    if (generation == searchGeneration) {
+                        failedOffset = state.nextOffset
+                        searchFailed = true
+                        hasMore = false
+                    }
+                } finally {
+                    if (generation == searchGeneration) loadingMore = false
+                }
+            }
+    }
+
+    // Refreshing the exchange catalogue can change ordering while this screen is open. Re-read
+    // the rows already displayed, but keep the LazyColumn state and stable market keys in place.
+    LaunchedEffect(loading) {
+        if (loading) return@LaunchedEffect
+        snapshotFlow { searchLoading || loadingMore }.first { !it }
+
+        val requestedQuery = searchText.trim()
+        val requestedFilters = filters
+        val generation = searchGeneration
+        if (results.query != requestedQuery || results.filters != requestedFilters) return@LaunchedEffect
+
+        val oldHasMore = hasMore
+        loadingMore = true
+        try {
+            val refreshed = WidgetSearch.refreshVisible(
+                text = requestedQuery,
+                filters = requestedFilters,
+                visibleCount = results.markets.size,
+                firstPageSize = SEARCH_PAGE_SIZE,
+                searchPage = { query, limit, offset, kind, exchange ->
+                    searchPage(query, limit, offset, WidgetSearchFilters(kind, exchange))
+                },
+            )
+            if (generation == searchGeneration && results.query == requestedQuery && results.filters == requestedFilters) {
+                results = refreshed.results
+                hasMore = refreshed.hasMore
+                failedOffset = null
+                searchFailed = false
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Keep the existing rows and pagination state. The next scroll can still request its
+            // page, and the footer remains available if that read also needs a retry.
+            if (generation == searchGeneration) {
+                failedOffset = 0
+                searchFailed = true
+                hasMore = oldHasMore
+            }
+        } finally {
+            if (generation == searchGeneration) loadingMore = false
+        }
     }
 
     Column(
@@ -296,7 +487,8 @@ private fun WidgetConfigScreen(
         // While a pair is being searched the preview gives its room to the results: with the
         // keyboard up they would otherwise get less than a row on a short screen. Picking a result
         // clears the query, so the preview returns showing that pair.
-        if (query.isBlank()) {
+        val showAppearance = selected != null && query.isBlank() && !filters.isFiltered && !searchActive
+        if (showAppearance) {
             WidgetPreview(
                 key = selected,
                 data = preview,
@@ -311,34 +503,29 @@ private fun WidgetConfigScreen(
 
         SearchField(
             state = queryState,
-            // The Stocks scope's counterpart of the app's empty-state hint: the blank field says it.
-            hint = stringResource(
-                if (scope == AssetClass.STOCK) {
-                    R.string.widget_config_scope_stocks_hint
-                } else {
-                    R.string.widget_config_search_hint
-                },
-            ),
+            hint = stringResource(R.string.widget_config_search_hint),
+            onFocusChange = { if (it) searchActive = true },
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
-        ScopeRow(scope = scope, onScopeChange = { scope = it })
+        WidgetMarketFilterRow(
+            kind = instrumentKind,
+            source = source,
+            onKindSelected = { instrumentKind = it },
+            onSourceSelected = { source = it },
+        )
 
         // Quick-add chips only make sense as a starting point; once the user types they are noise.
-        if (query.isBlank()) {
-            // Keyed so each scope's row starts scrolled to its first chip.
-            key(scope) {
-                PopularPairsRow(
-                    pairs = if (scope == AssetClass.STOCK) popularStocks else popularPairs,
-                    onPairClick = { pair -> queryState.setTextAndPlaceCursorAtEnd(pair) },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-            if (scope == AssetClass.STOCK) StockScopeCaption()
+        if (query.isBlank() && !filters.isFiltered) {
+            PopularPairsRow(
+                pairs = popularPairs,
+                onPairClick = { pair -> queryState.setTextAndPlaceCursorAtEnd(pair) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (query.isBlank()) {
+            if (showAppearance) {
                 AppearancePane(
                     backgroundArgb = background,
                     onBackgroundChange = { background = it },
@@ -348,26 +535,24 @@ private fun WidgetConfigScreen(
                     onShowSparklineChange = { showSparkline = it },
                 )
             } else {
-                // A new scope is a different list: start it at the top, not at the old offset.
-                key(scope) {
-                    // Rows or a count found for the other tab must not show under this one while
-                    // its own search is still running.
-                    val current = results.scope == scope
-                    ResultsPane(
-                        results = if (current) results.markets else emptyList(),
-                        loading = loading,
-                        pending = !current,
-                        selected = selected,
-                        stockCaption = scope == AssetClass.STOCK,
-                        otherScopeMatches = if (current) results.otherScopeMatches else 0,
-                        otherScope = WidgetSearch.other(scope),
-                        onShowOtherScope = { scope = WidgetSearch.other(scope) },
-                        onPick = { market ->
-                            selectedKey = market.key.value
-                            queryState.clearText()
-                        },
-                    )
-                }
+                val current = results.filters == filters && searchText == query.trim()
+                ResultsPane(
+                    results = if (current) results.markets else emptyList(),
+                    listState = resultsListState,
+                    loading = loading || searchLoading,
+                    pending = !current,
+                    loadingMore = current && loadingMore,
+                    failed = current && searchFailed,
+                    selected = selected,
+                    onRetry = { retryCount++ },
+                    onPick = { market ->
+                        selectedKey = market.key.value
+                        queryState.clearText()
+                        searchActive = false
+                        instrumentKind = null
+                        source = null
+                    },
+                )
             }
         }
 
@@ -405,14 +590,17 @@ private fun WidgetPreview(
     val live = data?.takeIf { it.hasData && it.marketKey == key }
     val sample = PreviewData(
         monogram = key?.exchange?.monogram,
-        pair = key?.pair ?: stringResource(R.string.widget_config_preview_pair),
+        pair = live?.pair ?: key?.pair ?: stringResource(R.string.widget_config_preview_pair),
         price = live?.price ?: SAMPLE_PRICE,
         change = live?.change ?: SAMPLE_CHANGE,
         up = live?.changeUp ?: true,
-        updated = stringResource(
-            R.string.widget_updated_at,
-            live?.updatedLabel?.takeIf { it.isNotEmpty() } ?: SAMPLE_TIME,
-        ),
+        updated = listOfNotNull(
+            live?.marketContext?.takeIf(String::isNotBlank),
+            stringResource(
+                R.string.widget_updated_at,
+                live?.updatedLabel?.takeIf { it.isNotEmpty() } ?: SAMPLE_TIME,
+            ),
+        ).joinToString(" · "),
         points = live?.spark?.takeIf { it.size >= 2 }?.toFloatArray() ?: SAMPLE_SPARK,
         showSparkline = showSparkline,
         fill = Color(blended),
@@ -618,7 +806,12 @@ private fun Modifier.checkerboard(): Modifier = drawBehind {
 // ---- Search --------------------------------------------------------------------------------
 
 @Composable
-private fun SearchField(state: TextFieldState, hint: String, modifier: Modifier = Modifier) {
+private fun SearchField(
+    state: TextFieldState,
+    hint: String,
+    onFocusChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     // BasicTextField exposes no label of its own, so the hint is published as the field's name for
     // TalkBack and for uiautomator (F5-4).
     val label = stringResource(R.string.widget_config_search_label)
@@ -641,7 +834,7 @@ private fun SearchField(state: TextFieldState, hint: String, modifier: Modifier 
             lineLimits = TextFieldLineLimits.SingleLine,
             textStyle = TWType.searchInput,
             cursorBrush = SolidColor(TW.Accent),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(it.isFocused) },
         )
     }
 }
@@ -655,8 +848,6 @@ private fun SearchField(state: TextFieldState, hint: String, modifier: Modifier 
  * The ranking comes from CoinGecko; its credit lives on the About screen, in the README and in
  * NOTICE rather than in a 36 dp row.
  *
- * The Stocks scope feeds the same row with plain stock tickers (`TSLA`), ranked from the local
- * catalogue; a tapped ticker is typed just the same and lists that stock's tokens.
  */
 @Composable
 private fun PopularPairsRow(pairs: List<String>, onPairClick: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -694,134 +885,125 @@ private fun PopularPairChip(pair: String, onClick: () -> Unit) {
     }
 }
 
-/**
- * The "Crypto | Stocks" scope under the search field, styled like the app's tab rows: the active
- * label in the primary text colour over a 3 dp accent indicator as wide as the text, the inactive one in the
- * secondary text colour, a 1 dp `outline` divider underneath. Each tab is at least 48 dp wide and
- * reports itself as a selected or unselected [Role.Tab].
- */
 @Composable
-private fun ScopeRow(scope: AssetClass, onScopeChange: (AssetClass) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(SCOPE_ROW_DP.dp - 1.dp)
-                .padding(start = SCOPE_ROW_START_DP.dp)
-                .selectableGroup(),
-        ) {
-            ScopeTab(
-                label = stringResource(R.string.widget_config_scope_crypto),
-                active = scope == AssetClass.CRYPTO,
-                onClick = { onScopeChange(AssetClass.CRYPTO) },
-            )
-            ScopeTab(
-                label = stringResource(R.string.widget_config_scope_stocks),
-                active = scope == AssetClass.STOCK,
-                onClick = { onScopeChange(AssetClass.STOCK) },
-            )
-        }
-        HorizontalDivider(thickness = 1.dp, color = TW.Outline)
-    }
-}
-
-@Composable
-private fun ScopeTab(label: String, active: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxHeight()
-            .widthIn(min = SCOPE_TAB_MIN_DP.dp)
-            .selectable(selected = active, role = Role.Tab, onClick = onClick)
-            .padding(horizontal = SCOPE_TAB_PAD_DP.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        // IntrinsicSize.Max pins the column to the label's own width, which the indicator fills.
-        Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(IntrinsicSize.Max),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = label,
-                style = if (active) TWType.tabActive else TWType.tab,
-                color = if (active) TW.TextPrimary else TW.TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .clip(IndicatorShape)
-                    .background(if (active) TW.Accent else Color.Transparent),
-            )
-        }
-    }
-}
-
-/** The Stocks scope's quiet caption: these are tokens traded on crypto exchanges, not the shares. */
-@Composable
-private fun StockScopeCaption() {
-    Text(
-        text = stringResource(R.string.widget_config_scope_caption),
-        style = TWType.subtitle,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
+private fun WidgetMarketFilterRow(
+    kind: InstrumentKind?,
+    source: ExchangeId?,
+    onKindSelected: (InstrumentKind?) -> Unit,
+    onSourceSelected: (ExchangeId?) -> Unit,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-    )
-}
-
-/** "N matches in Stocks": switches the scope, so it is a button with a 48 dp touch height. */
-@Composable
-private fun OtherScopeHint(count: Int, scope: AssetClass, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .heightIn(min = 48.dp)
-            .clip(ChipShape)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        contentAlignment = Alignment.Center,
+            .horizontalScroll(rememberScrollState())
+            .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = pluralStringResource(
-                if (scope == AssetClass.STOCK) {
-                    R.plurals.widget_config_scope_matches_stocks
-                } else {
-                    R.plurals.widget_config_scope_matches_crypto
-                },
-                count,
-                WidgetSearch.countLabel(count),
-            ),
-            style = TWType.textButton,
+        val kindLabel = stringResource(widgetKindResource(kind))
+        WidgetFilterMenu(
+            label = kindLabel,
+            description = stringResource(R.string.widget_filter_kind, kindLabel),
+            hint = stringResource(R.string.widget_filter_hint),
+            options = listOf(null to stringResource(R.string.widget_kind_all)) +
+                listOf(
+                    InstrumentKind.SPOT to stringResource(R.string.widget_kind_spot),
+                    InstrumentKind.PERPETUAL to stringResource(R.string.widget_kind_perpetual),
+                    InstrumentKind.OUTCOME to stringResource(R.string.widget_kind_outcome),
+                ),
+            selected = kind,
+            onSelected = onKindSelected,
+        )
+        val sourceLabel = source?.displayName ?: stringResource(R.string.widget_source_all)
+        WidgetFilterMenu(
+            label = sourceLabel,
+            description = stringResource(R.string.widget_filter_source, sourceLabel),
+            hint = stringResource(R.string.widget_filter_hint),
+            options = listOf(null to stringResource(R.string.widget_source_all)) +
+                ExchangeId.entries.map { it to it.displayName },
+            selected = source,
+            onSelected = onSourceSelected,
         )
     }
 }
 
-/**
- * The search results. Under an empty result a tappable "N matches in Stocks" (or Crypto) switches
- * to the scope that has the query. In the Stocks scope the caption heads the list instead of
- * sitting above it, so it scrolls away and leaves the rows the little room the keyboard spares.
- */
+@Composable
+private fun <T> WidgetFilterMenu(
+    label: String,
+    description: String,
+    hint: String,
+    options: List<Pair<T?, String>>,
+    selected: T?,
+    onSelected: (T?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(ChipShape)
+                .background(TW.ChipFill)
+                .border(1.dp, if (selected == null) TW.Outline else TW.Accent, ChipShape)
+                .clickable(onClickLabel = hint, role = Role.Button) { expanded = true }
+                .semantics { contentDescription = description }
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+        ) {
+            Text(
+                text = label,
+                style = TWType.subtitle,
+                color = if (selected == null) TW.TextSecondary else TW.TextPrimary,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(5.dp))
+            Canvas(Modifier.size(width = 10.dp, height = 6.dp)) {
+                val path = Path().apply {
+                    moveTo(0f, 0f)
+                    lineTo(size.width / 2f, size.height)
+                    lineTo(size.width, 0f)
+                }
+                drawPath(
+                    path = path,
+                    color = if (selected == null) TW.TextSecondary else TW.TextPrimary,
+                    style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, optionLabel) ->
+                DropdownMenuItem(
+                    text = { Text(optionLabel) },
+                    onClick = {
+                        onSelected(value)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun widgetKindResource(kind: InstrumentKind?): Int = when (kind) {
+    null -> R.string.widget_kind_all
+    InstrumentKind.SPOT -> R.string.widget_kind_spot
+    InstrumentKind.PERPETUAL -> R.string.widget_kind_perpetual
+    InstrumentKind.OUTCOME -> R.string.widget_kind_outcome
+}
+
+/** Filtered catalog rows; outcome sides and settlement details stay explicit in the picker. */
 @Composable
 private fun ResultsPane(
     results: List<Market>,
+    listState: LazyListState,
     loading: Boolean,
     pending: Boolean,
+    loadingMore: Boolean,
+    failed: Boolean,
     selected: MarketKey?,
-    stockCaption: Boolean,
-    otherScopeMatches: Int,
-    otherScope: AssetClass,
-    onShowOtherScope: () -> Unit,
+    onRetry: () -> Unit,
     onPick: (Market) -> Unit,
 ) {
-    // A tapped scope whose search has not answered yet: blank for that moment, not "No markets match".
-    if (pending) return
-    if (results.isEmpty()) {
+    // A query/filter change whose page has not answered yet: hide rows from the old request.
+    if (pending || results.isEmpty()) {
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center,
@@ -829,18 +1011,25 @@ private fun ResultsPane(
         ) {
             Text(
                 text = stringResource(
-                    if (loading) R.string.widget_config_loading else R.string.widget_config_no_match,
+                    when {
+                        failed -> R.string.widget_config_search_failed
+                        loading || pending -> R.string.widget_config_loading
+                        else -> R.string.widget_config_no_match
+                    },
                 ),
                 style = TWType.subtitle,
             )
-            if (otherScopeMatches > 0) {
-                OtherScopeHint(count = otherScopeMatches, scope = otherScope, onClick = onShowOtherScope)
+            if (failed) {
+                Text(
+                    text = stringResource(R.string.widget_config_retry),
+                    style = TWType.subtitle.copy(color = TW.Accent),
+                    modifier = Modifier.clickable(onClick = onRetry).padding(8.dp),
+                )
             }
         }
         return
     }
-    LazyColumn(Modifier.fillMaxSize()) {
-        if (stockCaption) item(key = CAPTION_ITEM_KEY) { StockScopeCaption() }
+    LazyColumn(Modifier.fillMaxSize(), state = listState) {
         items(results, key = { it.key.value }) { market ->
             Row(
                 modifier = Modifier
@@ -849,15 +1038,62 @@ private fun ResultsPane(
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = market.key.exchange.displayName.uppercase(),
-                    style = TWType.exchange,
-                    modifier = Modifier.width(62.dp),
-                )
-                Text(market.key.pair, style = TWType.row, maxLines = 1, modifier = Modifier.weight(1f))
-                if (market.key == selected) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(TW.Accent))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = market.exchange.displayName.uppercase(),
+                        style = TWType.exchange,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = market.compactDisplayLabel(),
+                        style = TWType.row,
+                        maxLines = if (market.instrumentKind == InstrumentKind.OUTCOME) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val details = listOfNotNull(
+                        market.instrumentKind.label,
+                        market.outcomeSide?.takeIf(String::isNotBlank),
+                        market.unit?.takeIf(String::isNotBlank),
+                    ).joinToString(" · ")
+                    if (details.isNotEmpty()) {
+                        Text(details, style = TWType.exchange, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    val settlementDetails = listOfNotNull(
+                        market.venue?.takeIf(String::isNotBlank),
+                        market.expiresAt?.let { expiry ->
+                            "Deadline ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(expiry))}"
+                        },
+                        if (!market.active) "Inactive" else null,
+                    ).joinToString(" · ")
+                    if (settlementDetails.isNotEmpty()) {
+                        Text(settlementDetails, style = TWType.exchange, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
+                if (market.key == selected) {
+                    Box(Modifier.padding(start = 8.dp).size(8.dp).clip(CircleShape).background(TW.Accent))
+                }
+            }
+        }
+        if (loadingMore) {
+            item(key = LOAD_MORE_ITEM_KEY) {
+                Text(
+                    text = stringResource(R.string.widget_config_loading),
+                    style = TWType.subtitle,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        } else if (failed) {
+            item(key = LOAD_MORE_ITEM_KEY) {
+                Text(
+                    text = stringResource(R.string.widget_config_retry),
+                    style = TWType.subtitle.copy(color = TW.Accent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onRetry)
+                        .padding(16.dp),
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }
@@ -990,17 +1226,11 @@ private fun hexOf(argb: Long): String = String.format(Locale.ROOT, "#%06X", argb
 /** The quick-add chips' pill, the shape the app's "+ Add pair" row uses. */
 private val ChipShape = RoundedCornerShape(percent = 50)
 
-/** The scope tabs' indicator, rounded on top like the app's watchlist tab row. */
-private val IndicatorShape = RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp)
-private const val SCOPE_ROW_DP = 36
-private const val SCOPE_TAB_MIN_DP = 48
-
-/** Half the app's 24 dp tab label gap on each side; with the row's 4 dp the first label sits 16 dp in. */
-private const val SCOPE_TAB_PAD_DP = 12
-private const val SCOPE_ROW_START_DP = 4
-private const val CAPTION_ITEM_KEY = "stock-caption"
+private const val LOAD_MORE_ITEM_KEY = "load-more"
 
 private const val SEARCH_DEBOUNCE_MS = 200L
+private const val SEARCH_PAGE_SIZE = 60
+private const val SEARCH_PREFETCH_THRESHOLD = 8
 private const val SAMPLE_PRICE = "65,609.70"
 private const val SAMPLE_CHANGE = "+6.52%"
 private const val SAMPLE_TIME = "12:34:56"
@@ -1012,6 +1242,16 @@ private const val PREVIEW_ROW_H_DP = 92f
 /** A taller slot, where the widget earns its "Updated" line; the width is whatever is left. */
 private const val PREVIEW_TALL_W_DP = 150f
 private const val PREVIEW_TALL_H_DP = 150f
+
+private data class ScrollRequestState(
+    val lastVisibleIndex: Int,
+    val loadingMore: Boolean,
+    val hasMore: Boolean,
+    val resultCount: Int,
+    val nextOffset: Int,
+    val query: String,
+    val filters: WidgetSearchFilters,
+)
 
 /**
  * The widget's type scale, borrowed by the preview. `lineHeight` is pinned to the widget's own

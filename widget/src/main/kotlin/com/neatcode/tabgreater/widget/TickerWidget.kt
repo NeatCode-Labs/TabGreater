@@ -258,10 +258,15 @@ private fun PriceLine(model: WidgetRenderModel, plan: WidgetPlan, styles: Styles
 /** "Updated hh:mm:ss" — the freshness line, on widgets tall enough to carry it. */
 @Composable
 private fun MetaLine(model: WidgetRenderModel, plan: WidgetPlan, styles: Styles) {
-    if (!plan.showMeta || model.updatedLabel.isEmpty()) return
+    if (!plan.showMeta) return
     val context = LocalContext.current
+    val updated = model.updatedLabel.takeIf(String::isNotEmpty)
+        ?.let { context.getString(R.string.widget_updated_at, it) }
+    val detail = listOfNotNull(model.contextForDisplay().takeIf(String::isNotBlank), updated)
+        .joinToString(" · ")
+    if (detail.isEmpty()) return
     Text(
-        text = context.getString(R.string.widget_updated_at, model.updatedLabel),
+        text = detail,
         style = styles.meta(plan.metaSp),
         maxLines = 1,
         modifier = GlanceModifier.fillMaxWidth(),

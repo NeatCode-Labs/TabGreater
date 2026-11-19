@@ -2,17 +2,18 @@ package com.neatcode.tabgreater.core.model
 
 import kotlinx.serialization.Serializable
 
-/** Supported spot exchanges. [id] is the stable string used in [MarketKey] and persistence. */
+/** Supported market-data sources. [id] is the stable string used in [MarketKey] and persistence. */
 @Serializable
 enum class ExchangeId(val id: String, val displayName: String) {
     BINANCE("binance", "Binance"),
     GATE("gate", "Gate.io"),
     KRAKEN("kraken", "Kraken"),
     KUCOIN("kucoin", "KuCoin"),
-    MEXC("mexc", "MEXC");
+    MEXC("mexc", "MEXC"),
+    HYPERLIQUID("hyperliquid", "Hyperliquid");
 
     /**
-     * Two letters that still tell the five exchanges apart at 10 dp — the badge the tiles, the
+     * Two letters that still tell the supported exchanges apart at 10 dp — the badge the tiles, the
      * chart header and the home-screen widget draw instead of a logo. Deliberately not the
      * exchanges' own marks: those are their trademarks and a public app has no licence to them.
      */
@@ -23,6 +24,7 @@ enum class ExchangeId(val id: String, val displayName: String) {
             KRAKEN -> "KR"
             KUCOIN -> "KC"
             MEXC -> "MX"
+            HYPERLIQUID -> "HL"
         }
 
     companion object {

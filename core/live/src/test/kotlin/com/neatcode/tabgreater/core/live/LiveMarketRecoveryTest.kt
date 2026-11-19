@@ -54,8 +54,9 @@ class LiveMarketRecoveryTest {
             override suspend fun refreshAll(force: Boolean) = Unit
             override suspend fun getMarket(key: MarketKey) = catalogue.find { it.key == key }
             override suspend fun getMarkets(keys: Collection<MarketKey>) = catalogue.filter { it.key in keys }.associateBy { it.key }
-            override suspend fun search(query: String, limit: Int, assetClass: AssetClass?) = catalogue
-            override suspend fun popularStockRoots(limit: Int) = emptyList<String>()
+            override suspend fun searchPage(
+            query: String, limit: Int, offset: Int, instrumentKind: InstrumentKind?, exchange: ExchangeId?,
+            ) = catalogue
         }
         return LiveMarketDataRepository(dao, markets, ExchangeRegistry(listOf(adapter)), backgroundScope,
             elapsed = { testScheduler.currentTime }, epoch = { 1_800_000_000_000L + testScheduler.currentTime })

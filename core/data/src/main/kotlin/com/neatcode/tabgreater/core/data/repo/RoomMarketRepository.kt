@@ -4,29 +4,30 @@ import com.neatcode.tabgreater.core.data.db.MarketDao
 import com.neatcode.tabgreater.core.data.db.MarketEntity
 import com.neatcode.tabgreater.core.exchange.SingleFlight
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
-import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.core.model.InstrumentKind
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 /**
- * Room-backed [MarketRepository]. Instrument lists are refreshed at most once per
- * [MarketRepository.MAX_AGE_MS] unless forced; every network failure is turned into a
+ * Room-backed [MarketRepository]. Instrument lists use a source-specific freshness window unless
+ * forced; every network failure is turned into a
  * [Result.failure] instead of an exception.
  *
  * @param catalogueValidSince epoch millis before which a stored list counts as stale whatever its
  *   age. The app passes the time it was installed or last updated: rows written by an older build
- *   were classified by that build's rules (asset class, underlying), so the first refresh after an
+ *   may carry earlier instrument metadata, so the first refresh after an
  *   update must not be skipped by the freshness gate.
  */
 class RoomMarketRepository(
     private val marketDao: MarketDao,
     private val registry: ExchangeRegistry,
-    private val now: () -> Long = System::currentTimeMillis,
+    private val now: () -> Long = marketClock,
     private val catalogueValidSince: () -> Long = { 0L },
 ) : MarketRepository {
 
@@ -39,20 +40,33 @@ class RoomMarketRepository(
         val adapter = registry.getOrNull(exchange) ?: return Result.success(Unit)
         return try {
             val startedAt = now()
+            val lastUpdated = marketDao.lastUpdated(exchange.id) ?: 0L
             if (!force) {
-                val lastUpdated = marketDao.lastUpdated(exchange.id) ?: 0L
-                val fresh = startedAt - lastUpdated < MarketRepository.MAX_AGE_MS
+                val fresh = startedAt - lastUpdated < maxAgeMs(exchange)
                 // A cutoff in the future (the clock was ahead when the app was installed) could
                 // never be met and would refetch every list on every call, so it is ignored.
                 val validSince = catalogueValidSince().takeIf { it <= startedAt } ?: 0L
                 if (fresh && lastUpdated >= validSince) return Result.success(Unit)
             }
-            val markets = adapter.listMarkets()
-            if (markets.isEmpty()) return Result.success(Unit)
-            val refreshedAt = now()
-            marketDao.upsertAll(markets.map { it.toEntity(refreshedAt) })
-            // Everything the exchange no longer lists still carries an older stamp.
-            marketDao.deleteStale(exchange.id, refreshedAt)
+            val snapshot = adapter.listMarketSnapshot()
+            val markets = snapshot.markets
+            if (markets.isEmpty()) {
+                return if (snapshot.isComplete) {
+                    Result.failure(IllegalStateException("${exchange.id} returned an empty complete market catalogue"))
+                } else {
+                    Result.success(Unit)
+                }
+            }
+            val fetchedAt = now()
+            // Every old row must sort strictly before this refresh, even when a forced refresh
+            // happens in the same millisecond as its previous stamp.
+            val refreshedAt = if (lastUpdated >= fetchedAt && lastUpdated < Long.MAX_VALUE) lastUpdated + 1 else fetchedAt
+            marketDao.syncCatalogue(
+                exchange = exchange.id,
+                markets = markets.map { it.toEntity(if (snapshot.isComplete) refreshedAt else lastUpdated) },
+                refreshedAt = refreshedAt,
+                archiveMissing = snapshot.isComplete,
+            )
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -88,79 +102,102 @@ class RoomMarketRepository(
         return out
     }
 
-    override suspend fun search(query: String, limit: Int, assetClass: AssetClass?): List<Market> {
-        if (limit <= 0) return emptyList()
-        val normalised = normaliseSearchQuery(query)
-        val parsed = parseSearchQuery(normalised)
-        if (parsed.isBlank) return emptyList()
-
-        // The class filter runs in SQL, before the candidate limit.
-        val classId = assetClass?.id
-        val rows = LinkedHashMap<String, MarketEntity>()
-        val quote = parsed.quote
-        if (quote != null) {
-            for (row in marketDao.searchPair(parsed.base, quote, classId, limit * CANDIDATE_FACTOR)) {
-                rows[row.marketKey] = row
-            }
-        } else {
-            val prefix = parsed.base
-            // The tokens of the typed ticker itself are fetched on their own: a short ticker that
-            // is also a quote prefix ("U") matches more rows than the candidate limit lets through.
-            if (assetClass == AssetClass.STOCK) {
-                for (row in marketDao.searchPair(prefix, "", classId, limit * CANDIDATE_FACTOR)) {
-                    rows[row.marketKey] = row
-                }
-            }
-            for (row in marketDao.search(prefix, "$prefix%", classId, limit * CANDIDATE_FACTOR)) {
-                rows[row.marketKey] = row
-            }
-            // "BTCEUR" -> BTC/EUR: SQLite gives us the rows whose base is a prefix of the query,
-            // the concatenated match itself is cheap to check in memory.
-            for (row in marketDao.searchConcatCandidates(prefix, classId, limit * CANDIDATE_FACTOR)) {
-                if (matchesConcatenated(row.base, row.quote, prefix)) rows[row.marketKey] = row
-            }
-        }
-
-        // "t" in Stocks: the tokens of share T on every exchange come before TSLAX, TSMX, ...
-        // Within either group the leveraged tokens (TSLA3L) follow the plain ones.
-        val order = if (assetClass == AssetClass.STOCK && parsed.base.isNotEmpty()) {
-            compareBy<MarketEntity>({ it.underlying != parsed.base }, { it.isLeveragedToken() }).then(CATALOGUE_ORDER)
-        } else {
-            CATALOGUE_ORDER
-        }
-        val supportedIds = registry.supported.mapTo(HashSet()) { it.id }
-        return rows.values.asSequence()
-            .filter { it.exchange in supportedIds }
-            .sortedWith(order)
-            .mapNotNull { it.toModelOrNull() }
-            .take(limit)
-            .toList()
+    override suspend fun nextDailyOutcomeMarket(current: Market, nowEpochMs: Long): Market? {
+        if (!current.isExpiredDailyPriceBinary(nowEpochMs)) return null
+        val seriesId = current.rolloverSeriesId ?: return null
+        val side = current.binarySide() ?: return null
+        val candidates = marketDao.getUpcomingOutcomeSeries(
+            exchange = current.exchange.id,
+            seriesId = seriesId,
+            side = side,
+            quote = current.quote,
+            afterEpochMs = nowEpochMs,
+        ).mapNotNull(MarketEntity::toModelOrNull)
+        return nextConfirmedDailyOutcome(current, candidates, nowEpochMs)
     }
 
-    override suspend fun popularStockRoots(limit: Int): List<String> {
-        if (limit <= 0) return emptyList()
+    override suspend fun searchPage(
+        query: String,
+        limit: Int,
+        offset: Int,
+        instrumentKind: InstrumentKind?,
+        exchange: ExchangeId?,
+    ): List<Market> {
+        if (limit <= 0 || offset < 0) return emptyList()
+        val compact = normaliseSearchQuery(query)
+        val parsed = parseSearchQuery(compact)
+        val searchText = normaliseSearchText(query)
+        val pairDisplayPrefix = normalisePairDisplayPrefix(query).orEmpty()
         val supportedIds = registry.supported.map { it.id }
-        if (supportedIds.isEmpty()) return emptyList()
-        return marketDao.popularUnderlyings(AssetClass.STOCK.id, supportedIds, limit)
+        val searchExchangeIds = when {
+            exchange == null -> supportedIds
+            exchange.id in supportedIds -> listOf(exchange.id)
+            else -> emptyList()
+        }
+        if (searchExchangeIds.isEmpty()) return emptyList()
+        return marketDao.searchCatalog(
+            searchText = searchText,
+            pairSearch = pairDisplayPrefix.isNotEmpty(),
+            pairDisplayPrefix = pairDisplayPrefix,
+            compactPrefix = if (parsed.quote == null) compact else parsed.base,
+            compactQuery = compact.replace("/", ""),
+            hasSlash = parsed.quote != null,
+            exactBase = pairDisplayPrefix.substringBefore('/'),
+            quotePrefix = pairDisplayPrefix.substringAfter('/', ""),
+            instrumentKind = instrumentKind?.id,
+            exchange = exchange?.id,
+            exchanges = searchExchangeIds,
+            limit = limit,
+            offset = offset,
+        ).mapNotNull(MarketEntity::toModelOrNull)
     }
 
     private companion object {
         /** SQLite refuses more bound variables than this in a single statement. */
         const val SQL_VARIABLE_LIMIT = 900
-
-        /** Over-fetch factor so the in-memory filter/sort still has [limit] rows to work with. */
-        const val CANDIDATE_FACTOR = 4
-
-        /** The order of every search result: exchange, then base, then quote. */
-        val CATALOGUE_ORDER: Comparator<MarketEntity> = compareBy({ it.exchange }, { it.base }, { it.quote })
-
-        /** What follows the underlying in a leveraged token's base: `3L`, `3S`, `5L`, `5S`. */
-        val LEVERAGED_SUFFIX = Regex("[35][LS]")
-
-        /** A 3x/5x token on its own underlying (`TSLA3L` on `TSLA`), as only Gate lists them. */
-        fun MarketEntity.isLeveragedToken(): Boolean {
-            val root = underlying ?: return false
-            return base.startsWith(root) && LEVERAGED_SUFFIX.matches(base.substring(root.length))
-        }
+        const val HYPERLIQUID_CATALOGUE_MAX_AGE_MS: Long = 10L * 60 * 1000
     }
+
+    private fun maxAgeMs(exchange: ExchangeId): Long =
+        if (exchange == ExchangeId.HYPERLIQUID) HYPERLIQUID_CATALOGUE_MAX_AGE_MS else MarketRepository.MAX_AGE_MS
+}
+
+/** Picks only an unambiguous, already catalogued contract at the nearest future deadline. */
+internal fun nextConfirmedDailyOutcome(
+    current: Market,
+    candidates: List<Market>,
+    nowEpochMs: Long,
+): Market? {
+    val seriesId = current.rolloverSeriesId ?: return null
+    val currentExpiry = current.expiresAt ?: return null
+    if (currentExpiry > nowEpochMs || !current.isDailyOutcome() || current.binarySide() == null) return null
+
+    val eligible = candidates.filter { candidate ->
+        candidate.key != current.key &&
+            candidate.exchange == current.exchange &&
+            candidate.quote == current.quote &&
+            candidate.rolloverSeriesId == seriesId &&
+            candidate.instrumentKind == InstrumentKind.OUTCOME &&
+            candidate.active &&
+            candidate.expiresAt?.let { it > nowEpochMs && it > currentExpiry } == true &&
+            candidate.binarySide() == current.binarySide() &&
+            !candidate.outcomeId.isNullOrBlank()
+    }
+    val nearestExpiry = eligible.minOfOrNull { it.expiresAt ?: Long.MAX_VALUE } ?: return null
+    val nearest = eligible.filter { it.expiresAt == nearestExpiry }.distinctBy { it.outcomeId }
+    return nearest.singleOrNull()
+}
+
+private val marketClock: () -> Long = System::currentTimeMillis
+
+private fun Market.isExpiredDailyPriceBinary(nowEpochMs: Long): Boolean =
+    isDailyOutcome() && expiresAt?.let { it <= nowEpochMs } == true && !outcomeId.isNullOrBlank() && binarySide() != null
+
+private fun Market.isDailyOutcome(): Boolean =
+    exchange == ExchangeId.HYPERLIQUID && instrumentKind == InstrumentKind.OUTCOME && !rolloverSeriesId.isNullOrBlank()
+
+private fun Market.binarySide(): String? = when (outcomeSide?.trim()?.lowercase(Locale.ROOT)) {
+    "yes" -> "yes"
+    "no" -> "no"
+    else -> null
 }

@@ -3,6 +3,7 @@ package com.neatcode.tabgreater.core.data.repo
 import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
 import kotlinx.coroutines.test.runTest
@@ -13,6 +14,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.time.Instant
 
 class RoomMarketRepositoryTest {
 
@@ -36,25 +38,26 @@ class RoomMarketRepositoryTest {
 
     private fun exchanges(vararg ids: ExchangeId) = ids.map { FakeExchangeAdapter(it) }.toTypedArray()
 
-    /** Coins and stock tokens side by side, as the adapters classify them. `T` is a coin as well as a share. */
-    private val mixed = listOf(
-        marketEntity("binance:TRX/USDT"),
-        stockEntity("binance:TSLAB/USDT", underlying = "TSLA"),
-        marketEntity("gate:TRX/USDT"),
-        stockEntity("gate:TSLAX/USDT", underlying = "TSLA"),
-        stockEntity("gate:TX/USDT", underlying = "T"),
-        marketEntity("kucoin:T/USDT"),
-        stockEntity("kucoin:TX/USDT", underlying = "T"),
-    )
-
-    private fun mixedRepository() =
-        repository(FakeMarketDao(mixed), *exchanges(ExchangeId.BINANCE, ExchangeId.GATE, ExchangeId.KUCOIN))
+    private fun dailyOutcome(key: String, id: String, side: String, expiry: String): Market {
+        val expiresAt = Instant.parse(expiry).toEpochMilli()
+        val slot = Math.floorMod(expiresAt, 24L * 60 * 60 * 1_000)
+        return Market(
+            key = MarketKey(key),
+            nativeSymbol = "#${id}0",
+            pricePrecision = 4,
+            instrumentKind = InstrumentKind.OUTCOME,
+            outcomeId = id,
+            outcomeSide = side,
+            expiresAt = expiresAt,
+            rolloverSeriesId = "priceBinary:BTC:1d:$slot",
+        )
+    }
 
     private fun List<Market>.keys(): List<String> = map { it.key.value }
 
     @Test
     fun `search matches a base prefix`() = runTest {
-        val results = repository(adapters = binance(FakeExchangeAdapter(ExchangeId.KRAKEN))).search("bt")
+        val results = repository(adapters = binance(FakeExchangeAdapter(ExchangeId.KRAKEN))).searchPage("bt")
         assertEquals(
             listOf("binance:BTC/EUR", "binance:BTC/USDT", "kraken:BTC/EUR"),
             results.map { it.key.value },
@@ -62,14 +65,87 @@ class RoomMarketRepositoryTest {
     }
 
     @Test
+    fun `daily outcome rollover accepts a unique same slot contract after several missed days`() = runTest {
+        val old = dailyOutcome("hyperliquid:OUTCOME_95_SIDE_0/USDC", "95", "Yes", "2026-11-20T06:00:00Z")
+        val next = dailyOutcome("hyperliquid:OUTCOME_105_SIDE_0/USDC", "105", "Yes", "2026-11-24T06:00:00Z")
+        val otherSlot = dailyOutcome("hyperliquid:OUTCOME_106_SIDE_0/USDC", "106", "Yes", "2026-11-23T12:00:00Z")
+            .copy(rolloverSeriesId = "priceBinary:BTC:1d:43200000")
+        val dao = FakeMarketDao(listOf(old, next, otherSlot).map { it.toEntity(1L) })
+        val repository = repository(dao, *exchanges(ExchangeId.HYPERLIQUID))
+
+        val confirmed = repository.nextDailyOutcomeMarket(
+            old,
+            Instant.parse("2026-11-23T07:00:00Z").toEpochMilli(),
+        )
+
+        assertEquals(next.key, confirmed?.key)
+        assertEquals(next.expiresAt, confirmed?.expiresAt)
+    }
+
+    @Test
+    fun `daily outcome rollover refuses same deadline ambiguity`() = runTest {
+        val old = dailyOutcome("hyperliquid:OUTCOME_95_SIDE_0/USDC", "95", "Yes", "2026-11-20T06:00:00Z")
+        val first = dailyOutcome("hyperliquid:OUTCOME_105_SIDE_0/USDC", "105", "Yes", "2026-11-24T06:00:00Z")
+        val second = dailyOutcome("hyperliquid:OUTCOME_107_SIDE_0/USDC", "107", "Yes", "2026-11-24T06:00:00Z")
+        val repository = repository(
+            FakeMarketDao(listOf(old, first, second).map { it.toEntity(1L) }),
+            *exchanges(ExchangeId.HYPERLIQUID),
+        )
+
+        assertNull(repository.nextDailyOutcomeMarket(old, Instant.parse("2026-11-23T07:00:00Z").toEpochMilli()))
+    }
+
+    @Test
+    fun `legacy daily outcome description recovers family and deadline after its listing disappears`() {
+        val expiry = Instant.parse("2026-11-20T06:00:00Z").toEpochMilli()
+        val legacy = marketEntity("hyperliquid:OUTCOME_95_SIDE_0/USDC", active = false).copy(
+            instrumentKind = InstrumentKind.OUTCOME.id,
+            outcomeId = "95",
+            outcomeSide = "Yes",
+            description = "class:priceBinary|underlying:BTC|expiry:20261120-0600|targetPrice:63330|period:1d",
+            expiresAt = null,
+            rolloverSeriesId = null,
+        )
+
+        val restored = legacy.toModelOrNull()
+
+        assertEquals("priceBinary:BTC:1d:21600000", restored?.rolloverSeriesId)
+        assertEquals(expiry, restored?.expiresAt)
+    }
+
+    @Test
+    fun `legacy fallback accepts only an exact Hyperliquid outcome class field`() {
+        val descriptor = "class:priceBinary|underlying:BTC|expiry:20261120-0600|targetPrice:63330|period:1d"
+        val legacyOutcome = marketEntity("hyperliquid:OUTCOME_95_SIDE_0/USDC").copy(
+            instrumentKind = InstrumentKind.OUTCOME.id,
+            outcomeId = "95",
+            outcomeSide = "Yes",
+        )
+
+        val similarlyNamedClass = legacyOutcome.copy(description = descriptor.replace("class:priceBinary|", "class:priceBinaryOther|"))
+        val proseMention = legacyOutcome.copy(description = "Official listing mentions $descriptor")
+        val spot = legacyOutcome.copy(
+            exchange = ExchangeId.HYPERLIQUID.id,
+            instrumentKind = InstrumentKind.SPOT.id,
+            description = descriptor,
+        )
+
+        assertNull(similarlyNamedClass.toModelOrNull()?.rolloverSeriesId)
+        assertNull(similarlyNamedClass.toModelOrNull()?.expiresAt)
+        assertNull(proseMention.toModelOrNull()?.rolloverSeriesId)
+        assertNull(spot.toModelOrNull()?.rolloverSeriesId)
+        assertNull(spot.toModelOrNull()?.expiresAt)
+    }
+
+    @Test
     fun `search matches a quote prefix`() = runTest {
-        val results = repository(adapters = binance()).search("usdt")
+        val results = repository(adapters = binance()).searchPage("usdt")
         assertTrue(results.map { it.key.value }.containsAll(listOf("binance:BTC/USDT", "binance:EURI/USDT")))
     }
 
     @Test
     fun `search splits on a slash`() = runTest {
-        val results = repository(adapters = binance(FakeExchangeAdapter(ExchangeId.KRAKEN))).search(" btc / eu ")
+        val results = repository(adapters = binance(FakeExchangeAdapter(ExchangeId.KRAKEN))).searchPage(" btc / eu ")
         assertEquals(listOf("binance:BTC/EUR", "kraken:BTC/EUR"), results.map { it.key.value })
     }
 
@@ -87,38 +163,107 @@ class RoomMarketRepositoryTest {
         val repository = repository(dao = dao, adapters = binance())
         assertEquals(
             listOf("binance:ETH/USD", "binance:ETH/USDC", "binance:ETH/USDT"),
-            repository.search("eth/usd").map { it.key.value },
+            repository.searchPage("eth/usd").map { it.key.value },
         )
         // Without the divider the base is still a prefix, so ETHFI shows up too.
         assertEquals(
             listOf("binance:ETH/USD", "binance:ETH/USDC", "binance:ETH/USDT", "binance:ETHFI/USD", "binance:ETHFI/USDT"),
-            repository.search("eth").map { it.key.value },
+            repository.searchPage("eth").map { it.key.value },
         )
         // A leading slash still means "any base".
-        assertEquals(5, repository.search("/usd").size)
+        assertEquals(5, repository.searchPage("/usd").size)
     }
 
     @Test
     fun `search understands the concatenated form`() = runTest {
-        val results = repository(adapters = binance()).search("btceur")
+        val results = repository(adapters = binance()).searchPage("btceur")
         assertEquals(listOf("binance:BTC/EUR"), results.map { it.key.value })
     }
 
     @Test
     fun `search hides exchanges without an adapter`() = runTest {
-        val results = repository(adapters = binance()).search("btc")
+        val results = repository(adapters = binance()).searchPage("btc")
         assertTrue(results.all { it.key.exchange == ExchangeId.BINANCE })
         assertFalse(results.any { it.key.exchange == ExchangeId.MEXC })
     }
 
     @Test
-    fun `search on a blank query returns nothing`() = runTest {
-        assertEquals(emptyList<String>(), repository(adapters = binance()).search("  //  ").map { it.key.value })
+    fun `blank query browses the active catalogue`() = runTest {
+        assertTrue(repository(adapters = binance()).searchPage("").isNotEmpty())
+    }
+
+    @Test
+    fun `blank query with instrument and source filters browses active markets`() = runTest {
+        val event = marketEntity("hyperliquid:OUTCOME_123/YES").copy(
+            instrumentKind = InstrumentKind.OUTCOME.id,
+            displayName = "Bitcoin above \$100,000 by Dec 31?",
+            description = "Will Bitcoin trade above \$100,000 by 2026-12-31?",
+            unit = "USD per BTC",
+            venue = "HIP-4",
+            eventId = "question-123",
+            outcomeId = "yes-123",
+            outcomeSide = "Yes",
+            expiresAt = 1_800_000_000_000L,
+        )
+        val ordinary = marketEntity("hyperliquid:BTC/USDC")
+        val repo = repository(
+            FakeMarketDao(listOf(event, ordinary)),
+            *exchanges(ExchangeId.HYPERLIQUID),
+        )
+
+        assertEquals(listOf("hyperliquid:OUTCOME_123/YES"), repo.searchPage("", instrumentKind = InstrumentKind.OUTCOME).keys())
+        assertEquals(
+            listOf("hyperliquid:OUTCOME_123/YES"),
+            repo.searchPage("", instrumentKind = InstrumentKind.OUTCOME, exchange = ExchangeId.HYPERLIQUID).keys(),
+        )
+        assertEquals(listOf("hyperliquid:OUTCOME_123/YES"), repo.searchPage("bitcoin", instrumentKind = InstrumentKind.OUTCOME).keys())
+        assertEquals(listOf("hyperliquid:OUTCOME_123/YES"), repo.searchPage("\$100,000", instrumentKind = InstrumentKind.OUTCOME).keys())
+        assertEquals(emptyList<String>(), repo.searchPage("", instrumentKind = InstrumentKind.OUTCOME, exchange = ExchangeId.BINANCE).keys())
+    }
+
+    @Test
+    fun `slash pair searches keep exact bases while matching display and native aliases`() = runTest {
+        val syntheticSpot = marketEntity("hyperliquid:SPOT_107/USDC").copy(
+            nativeSymbol = "@107",
+            displayName = "HYPE/USDC",
+        )
+        val similarBase = marketEntity("hyperliquid:KHYPE/USDC").copy(displayName = "KHYPE/USDC")
+        val namespacedPerpetual = marketEntity("hyperliquid:HIP3_XYZ_ANT/USD").copy(
+            nativeSymbol = "xyz:ANT",
+            displayName = "xyz:ANT/USD",
+            assetClass = AssetClass.STOCK.id,
+            underlying = "ANT",
+            instrumentKind = InstrumentKind.PERPETUAL.id,
+        )
+        val seasonEvent = marketEntity("hyperliquid:EVENT_2026_27/YES").copy(
+            displayName = "2026/2027 NBA winner · Yes",
+            description = "Basketball season winner · 勝者 · 5%",
+            instrumentKind = InstrumentKind.OUTCOME.id,
+            eventId = "nba-2026-27",
+            outcomeSide = "Yes",
+        )
+        val repo = repository(
+            FakeMarketDao(listOf(syntheticSpot, similarBase, namespacedPerpetual, seasonEvent)),
+            *exchanges(ExchangeId.HYPERLIQUID),
+        )
+
+        assertEquals(listOf("hyperliquid:SPOT_107/USDC"), repo.searchPage("HYPE/USDC", exchange = ExchangeId.HYPERLIQUID).keys())
+        assertEquals(listOf("hyperliquid:SPOT_107/USDC"), repo.searchPage("HYPE/US", exchange = ExchangeId.HYPERLIQUID).keys())
+        assertEquals(listOf("hyperliquid:SPOT_107/USDC"), repo.searchPage("@107", exchange = ExchangeId.HYPERLIQUID).keys())
+        assertEquals(listOf("hyperliquid:HIP3_XYZ_ANT/USD"), repo.searchPage("xyz:ANT/USD", exchange = ExchangeId.HYPERLIQUID).keys())
+        assertEquals(listOf("hyperliquid:HIP3_XYZ_ANT/USD"), repo.searchPage("ANT/USD", exchange = ExchangeId.HYPERLIQUID).keys())
+        assertEquals(listOf("hyperliquid:EVENT_2026_27/YES"), repo.searchPage("2026/2027 NBA", instrumentKind = InstrumentKind.OUTCOME).keys())
+        assertEquals(listOf("hyperliquid:EVENT_2026_27/YES"), repo.searchPage("basketball", instrumentKind = InstrumentKind.OUTCOME).keys())
+        assertEquals(listOf("hyperliquid:EVENT_2026_27/YES"), repo.searchPage("勝者").keys())
+        assertEquals(listOf("hyperliquid:EVENT_2026_27/YES"), repo.searchPage("%").keys())
+        assertEquals(listOf("hyperliquid:SPOT_107/USDC"), repo.searchPage("@").keys())
+        assertEquals(listOf("hyperliquid:SPOT_107/USDC"), repo.searchPage("SPOT_107/USDC").keys())
+        assertTrue(repo.searchPage("勝者/USDC").isEmpty())
     }
 
     @Test
     fun `search honours the limit`() = runTest {
-        assertEquals(1, repository(adapters = binance()).search("bt", limit = 1).size)
+        assertEquals(1, repository(adapters = binance()).searchPage("bt", limit = 1).size)
     }
 
     @Test
@@ -144,6 +289,42 @@ class RoomMarketRepositoryTest {
 
         assertTrue(repo.refreshMarkets(ExchangeId.BINANCE).isSuccess)
         assertEquals(0, adapter.listMarketsCalls)
+    }
+
+    @Test
+    fun `Hyperliquid refresh uses a ten minute catalogue lifetime`() = runTest {
+        val now = 10_000_000L
+        val freshDao = FakeMarketDao(listOf(marketEntity("hyperliquid:BTC/USDC", updatedAt = now - 9 * 60 * 1000L)))
+        val freshAdapter = FakeExchangeAdapter(ExchangeId.HYPERLIQUID, listOf(market("hyperliquid:BTC/USDC")))
+        assertTrue(repository(freshDao, freshAdapter, now = { now }).refreshMarkets(ExchangeId.HYPERLIQUID).isSuccess)
+        assertEquals(0, freshAdapter.listMarketsCalls)
+
+        val staleDao = FakeMarketDao(listOf(marketEntity("hyperliquid:BTC/USDC", updatedAt = now - 11 * 60 * 1000L)))
+        val staleAdapter = FakeExchangeAdapter(ExchangeId.HYPERLIQUID, listOf(market("hyperliquid:BTC/USDC")))
+        assertTrue(repository(staleDao, staleAdapter, now = { now }).refreshMarkets(ExchangeId.HYPERLIQUID).isSuccess)
+        assertEquals(1, staleAdapter.listMarketsCalls)
+    }
+
+    @Test
+    fun `Hyperliquid refresh archives missing listings and retains their watched labels`() = runTest {
+        val now = 20_000_000L
+        val oldEvent = marketEntity("hyperliquid:OUTCOME_123/YES", updatedAt = now).copy(
+            instrumentKind = InstrumentKind.OUTCOME.id,
+            displayName = "Bitcoin above \$100,000?",
+            eventId = "question-123",
+            outcomeSide = "Yes",
+        )
+        val dao = FakeMarketDao(listOf(oldEvent))
+        val adapter = FakeExchangeAdapter(ExchangeId.HYPERLIQUID, listOf(market("hyperliquid:BTC/USDC")))
+        val repo = repository(dao, adapter, now = { now })
+
+        assertTrue(repo.refreshMarkets(ExchangeId.HYPERLIQUID, force = true).isSuccess)
+        assertEquals(1, dao.deactivateStaleCalls)
+        assertEquals(0, dao.deleteStaleCalls)
+        val archived = repo.getMarket(MarketKey("hyperliquid:OUTCOME_123/YES"))
+        assertEquals("Bitcoin above \$100,000?", archived?.displayName)
+        assertEquals(false, archived?.active)
+        assertEquals(emptyList<String>(), repo.searchPage("bitcoin", exchange = ExchangeId.HYPERLIQUID).keys())
     }
 
     @Test
@@ -174,17 +355,6 @@ class RoomMarketRepositoryTest {
     }
 
     @Test
-    fun `stock search keeps the typed ticker's own tokens when candidates overflow the limit`() = runTest {
-        // "U" is also a quote prefix, so every USDT row is a candidate and the limit cuts by exchange order.
-        val crowd = (1..12).map { stockEntity("binance:S${it}B/USDT", underlying = "S$it") }
-        val own = stockEntity("kucoin:UX/USDT", underlying = "U")
-        val repo = repository(FakeMarketDao(crowd + own), *exchanges(ExchangeId.BINANCE, ExchangeId.KUCOIN))
-
-        val results = repo.search("u", limit = 2, assetClass = AssetClass.STOCK).keys()
-        assertEquals("kucoin:UX/USDT", results.first())
-    }
-
-    @Test
     fun `refreshMarkets replaces delisted markets`() = runTest {
         val dao = FakeMarketDao(seed.map { it.copy(updatedAt = 900_000L) })
         val adapter = FakeExchangeAdapter(
@@ -195,9 +365,9 @@ class RoomMarketRepositoryTest {
 
         assertTrue(repo.refreshMarkets(ExchangeId.BINANCE, force = true).isSuccess)
         assertEquals(1, adapter.listMarketsCalls)
-        assertEquals(1, dao.deleteStaleCalls)
+        assertEquals(1, dao.deactivateStaleCalls)
 
-        val binanceKeys = dao.all.filter { it.exchange == "binance" }.map { it.marketKey }.sorted()
+        val binanceKeys = dao.all.filter { it.exchange == "binance" && it.active }.map { it.marketKey }.sorted()
         assertEquals(listOf("binance:BTC/EUR", "binance:SOL/EUR"), binanceKeys)
         // Other exchanges are untouched.
         assertTrue(dao.all.any { it.marketKey == "kraken:BTC/EUR" })
@@ -209,6 +379,49 @@ class RoomMarketRepositoryTest {
         val result = repository(FakeMarketDao(), adapter).refreshMarkets(ExchangeId.BINANCE, force = true)
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull() is IOException)
+    }
+
+    @Test
+    fun `an empty complete catalogue is a failure and preserves cached listings`() = runTest {
+        val existing = marketEntity("hyperliquid:OUTCOME_95_SIDE_0/USDC", updatedAt = 1L)
+        val dao = FakeMarketDao(listOf(existing))
+        val adapter = FakeExchangeAdapter(ExchangeId.HYPERLIQUID, emptyList())
+        val repo = repository(dao, adapter)
+
+        val result = repo.refreshMarkets(ExchangeId.HYPERLIQUID, force = true)
+
+        assertTrue(result.isFailure)
+        assertEquals(0, dao.deactivateStaleCalls)
+        assertEquals(true, repo.getMarket(MarketKey(existing.marketKey))?.active)
+    }
+
+    @Test
+    fun `a partial venue response retains previously active markets for the next refresh`() = runTest {
+        val dao = FakeMarketDao(seed)
+        val adapter = FakeExchangeAdapter(ExchangeId.BINANCE, listOf(market("binance:NEW/EUR")), complete = false)
+        val repo = repository(dao, adapter)
+        assertTrue(repo.refreshMarkets(ExchangeId.BINANCE, force = true).isSuccess)
+        assertEquals(0, dao.deactivateStaleCalls)
+        assertEquals(true, repo.getMarket(MarketKey("binance:BTC/EUR"))?.active)
+        assertEquals(true, repo.getMarket(MarketKey("binance:NEW/EUR"))?.active)
+    }
+
+    @Test
+    fun `a partial Kraken snapshot keeps absent tokenized rows active`() = runTest {
+        val tokenized = stockEntity("kraken:AAPLX/USD", underlying = "AAPL").copy(updatedAt = 900_000L)
+        val dao = FakeMarketDao(seed + tokenized)
+        val adapter = FakeExchangeAdapter(
+            ExchangeId.KRAKEN,
+            listOf(market("kraken:BTC/EUR")),
+            complete = false,
+        )
+        val repo = repository(dao, adapter)
+
+        assertTrue(repo.refreshMarkets(ExchangeId.KRAKEN, force = true).isSuccess)
+
+        assertEquals(0, dao.deactivateStaleCalls)
+        assertEquals(true, repo.getMarket(MarketKey("kraken:AAPLX/USD"))?.active)
+        assertEquals(true, repo.getMarket(MarketKey("kraken:BTC/EUR"))?.active)
     }
 
     @Test
@@ -227,187 +440,16 @@ class RoomMarketRepositoryTest {
     }
 
     @Test
-    fun `search without a class returns every class in the catalogue order`() = runTest {
-        val repo = mixedRepository()
-        val everything = listOf(
-            "binance:TRX/USDT", "binance:TSLAB/USDT", "gate:TRX/USDT", "gate:TSLAX/USDT", "gate:TX/USDT",
-            "kucoin:T/USDT", "kucoin:TX/USDT",
-        )
-        assertEquals(everything, repo.search("t").keys())
-        assertEquals(everything, repo.search("t", assetClass = null).keys())
-        assertEquals(listOf("binance:TSLAB/USDT", "gate:TSLAX/USDT"), repo.search("tsla").keys())
-    }
-
-    @Test
-    fun `a crypto search leaves the stock tokens out and keeps the order`() = runTest {
-        val repo = mixedRepository()
-        val crypto = repo.search("t", assetClass = AssetClass.CRYPTO)
-        assertEquals(listOf("binance:TRX/USDT", "gate:TRX/USDT", "kucoin:T/USDT"), crypto.keys())
-        assertTrue(crypto.all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
-        assertEquals(emptyList<String>(), repo.search("tsla", assetClass = AssetClass.CRYPTO).keys())
-    }
-
-    @Test
-    fun `a stock search lists the typed underlying first`() = runTest {
-        val repo = mixedRepository()
-        // The tokens of share T come before TSLAB and TSLAX although binance sorts first.
-        val stocks = repo.search("t", assetClass = AssetClass.STOCK)
-        assertEquals(listOf("gate:TX/USDT", "kucoin:TX/USDT", "binance:TSLAB/USDT", "gate:TSLAX/USDT"), stocks.keys())
-        assertEquals(listOf("T", "T", "TSLA", "TSLA"), stocks.map { it.underlying })
-        assertTrue(stocks.all { it.assetClass == AssetClass.STOCK })
-        assertEquals(
-            listOf("binance:TSLAB/USDT", "gate:TSLAX/USDT"),
-            repo.search("tsla", assetClass = AssetClass.STOCK).keys(),
-        )
-    }
-
-    @Test
-    fun `slash and concatenated queries respect the class`() = runTest {
-        val repo = mixedRepository()
-        assertEquals(listOf("gate:TX/USDT", "kucoin:TX/USDT"), repo.search("tx/usdt", assetClass = AssetClass.STOCK).keys())
-        assertEquals(emptyList<String>(), repo.search("tx/usdt", assetClass = AssetClass.CRYPTO).keys())
-        assertEquals(listOf("kucoin:T/USDT"), repo.search("t/usdt", assetClass = AssetClass.CRYPTO).keys())
-        // In Stocks the pinned base may name the share: T/USDT lists the tokens of share T.
-        assertEquals(
-            listOf("gate:TX/USDT", "kucoin:TX/USDT"),
-            repo.search("t/usdt", assetClass = AssetClass.STOCK).keys(),
-        )
-        assertEquals(
-            listOf("binance:TRX/USDT", "gate:TRX/USDT", "kucoin:T/USDT"),
-            repo.search("/usdt", assetClass = AssetClass.CRYPTO).keys(),
-        )
-
-        assertEquals(listOf("gate:TSLAX/USDT"), repo.search("tslaxusdt", assetClass = AssetClass.STOCK).keys())
-        assertEquals(emptyList<String>(), repo.search("tslaxusdt", assetClass = AssetClass.CRYPTO).keys())
-        assertEquals(
-            listOf("binance:TRX/USDT", "gate:TRX/USDT"),
-            repo.search("trxusdt", assetClass = AssetClass.CRYPTO).keys(),
-        )
-        assertEquals(emptyList<String>(), repo.search("trxusdt", assetClass = AssetClass.STOCK).keys())
-    }
-
-    @Test
-    fun `a slash query names the share in Stocks and changes nothing elsewhere`() = runTest {
-        val repo = mixedRepository()
-        assertEquals(
-            listOf("binance:TSLAB/USDT", "gate:TSLAX/USDT"),
-            repo.search("tsla/usdt", assetClass = AssetClass.STOCK).keys(),
-        )
-        assertEquals(
-            listOf("binance:TSLAB/USDT", "gate:TSLAX/USDT"),
-            repo.search("tsla/us", assetClass = AssetClass.STOCK).keys(),
-        )
-        assertEquals(emptyList<String>(), repo.search("tsla/eur", assetClass = AssetClass.STOCK).keys())
-        // No token's base is TSLA, so every other class still finds nothing.
-        assertEquals(emptyList<String>(), repo.search("tsla/usdt").keys())
-        assertEquals(emptyList<String>(), repo.search("tsla/usdt", assetClass = AssetClass.CRYPTO).keys())
-        assertEquals(listOf("kucoin:T/USDT"), repo.search("t/usdt").keys())
-    }
-
-    @Test
-    fun `leveraged tokens follow the plain tokens in a stock search`() = runTest {
-        val dao = FakeMarketDao(
-            listOf(
-                stockEntity("binance:TSLAB/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSLA3L/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSLA3S/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSLAX/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSM3L/USDT", underlying = "TSM"),
-                stockEntity("gate:TSMX/USDT", underlying = "TSM"),
-                stockEntity("kucoin:TSLAX/USDT", underlying = "TSLA"),
-            ),
-        )
-        val repo = repository(dao, *exchanges(ExchangeId.BINANCE, ExchangeId.GATE, ExchangeId.KUCOIN))
-        assertEquals(
-            listOf(
-                "binance:TSLAB/USDT", "gate:TSLAX/USDT", "kucoin:TSLAX/USDT", "gate:TSLA3L/USDT", "gate:TSLA3S/USDT",
-            ),
-            repo.search("tsla", assetClass = AssetClass.STOCK).keys(),
-        )
-        // Likewise when no share is typed exactly; every other scope keeps the catalogue order.
-        assertEquals(
-            listOf(
-                "binance:TSLAB/USDT", "gate:TSLAX/USDT", "gate:TSMX/USDT", "kucoin:TSLAX/USDT", "gate:TSLA3L/USDT",
-                "gate:TSLA3S/USDT", "gate:TSM3L/USDT",
-            ),
-            repo.search("ts", assetClass = AssetClass.STOCK).keys(),
-        )
-        assertEquals(
-            listOf("binance:TSLAB/USDT", "gate:TSLA3L/USDT", "gate:TSLA3S/USDT", "gate:TSLAX/USDT", "kucoin:TSLAX/USDT"),
-            repo.search("tsla").keys(),
-        )
-    }
-
-    @Test
-    fun `the class filter runs before the candidate limit`() = runTest {
-        // limit = 1 asks the DAO for 4 candidates, and the first four rows are all stock tokens:
-        // filtering after the limit would leave a crypto search with nothing.
-        val dao = FakeMarketDao(
-            listOf(
-                stockEntity("binance:AAPLB/USDT", underlying = "AAPL"),
-                stockEntity("binance:MSTRB/USDT", underlying = "MSTR"),
-                stockEntity("binance:NVDAB/USDT", underlying = "NVDA"),
-                stockEntity("binance:TSLAB/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSLAX/USDT", underlying = "TSLA"),
-                marketEntity("kucoin:BTC/USDT"),
-            ),
-        )
-        val repo = repository(dao, *exchanges(ExchangeId.BINANCE, ExchangeId.GATE, ExchangeId.KUCOIN))
-        assertEquals(listOf("kucoin:BTC/USDT"), repo.search("usdt", limit = 1, assetClass = AssetClass.CRYPTO).keys())
-        assertEquals(listOf("kucoin:BTC/USDT"), repo.search("/usdt", limit = 1, assetClass = AssetClass.CRYPTO).keys())
-        assertEquals(listOf("binance:AAPLB/USDT"), repo.search("usdt", limit = 1, assetClass = AssetClass.STOCK).keys())
-    }
-
-    @Test
-    fun `popularStockRoots ranks by exchanges, then markets, then name`() = runTest {
-        val dao = FakeMarketDao(
-            listOf(
-                stockEntity("binance:TSLAB/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSLAX/USDT", underlying = "TSLA"),
-                stockEntity("gate:TSLAG/USDT", underlying = "TSLA"),
-                stockEntity("kucoin:TSLAX/USDT", underlying = "TSLA"),
-                stockEntity("binance:AAPLB/USDT", underlying = "AAPL"),
-                stockEntity("gate:AAPLX/USDT", underlying = "AAPL"),
-                stockEntity("mexc:AAPLX/USDT", underlying = "AAPL"),
-                stockEntity("gate:NVDAX/USDT", underlying = "NVDA"),
-                stockEntity("mexc:NVDAX/USDT", underlying = "NVDA"),
-                stockEntity("mexc:NVDAON/USDT", underlying = "NVDA"),
-                stockEntity("gate:COINX/USDT", underlying = "COIN"),
-                stockEntity("mexc:COINX/USDT", underlying = "COIN"),
-                stockEntity("gate:AMDX/USDT", underlying = "AMD"),
-                stockEntity("mexc:AMDX/USDT", underlying = "AMD"),
-                marketEntity("binance:BTC/USDT"),
-                marketEntity("gate:BTC/USDT"),
-                marketEntity("kucoin:BTC/USDT"),
-                marketEntity("mexc:BTC/USDT"),
-            ),
-        )
-        val repo = repository(dao, *exchanges(ExchangeId.BINANCE, ExchangeId.GATE, ExchangeId.KUCOIN, ExchangeId.MEXC))
-        // TSLA and AAPL are on 3 exchanges (4 and 3 markets); NVDA, AMD and COIN on 2 (3, 2 and 2).
-        assertEquals(listOf("TSLA", "AAPL", "NVDA", "AMD", "COIN"), repo.popularStockRoots())
-        assertEquals(listOf("TSLA", "AAPL"), repo.popularStockRoots(limit = 2))
-        assertEquals(emptyList<String>(), repo.popularStockRoots(limit = 0))
-    }
-
-    @Test
-    fun `popularStockRoots ignores inactive markets and exchanges without an adapter`() = runTest {
-        val dao = FakeMarketDao(
-            listOf(
-                stockEntity("binance:AAPLB/USDT", underlying = "AAPL"),
-                stockEntity("binance:HOODB/USDT", underlying = "HOOD", active = false),
-                stockEntity("gate:HOODX/USDT", underlying = "HOOD", active = false),
-                stockEntity("mexc:MSTRX/USDT", underlying = "MSTR"),
-                stockEntity("mexc:MSTRON/USDT", underlying = "MSTR"),
-            ),
-        )
-        assertEquals(listOf("AAPL"), repository(dao, *exchanges(ExchangeId.BINANCE, ExchangeId.GATE)).popularStockRoots())
-    }
-
-    @Test
-    fun `popularStockRoots is empty while the catalogue holds no stock token`() = runTest {
-        val coinsOnly = repository(adapters = binance(FakeExchangeAdapter(ExchangeId.KRAKEN)))
-        assertEquals(emptyList<String>(), coinsOnly.popularStockRoots())
-        assertEquals(emptyList<String>(), repository(FakeMarketDao()).popularStockRoots())
+    fun `typed and unfiltered pages cover every matching market beyond 300 without overlap`() = runTest {
+        val rows = (1..723).map { marketEntity("binance:COIN${it.toString().padStart(4, '0')}/USDT") }
+        val repo = repository(FakeMarketDao(rows.reversed()), *binance())
+        val expected = rows.map { it.marketKey }
+        for (query in listOf("", "coin")) {
+            val pages = (0..780 step 60).flatMap { offset ->
+                repo.searchPage(query, limit = 60, offset = offset, instrumentKind = InstrumentKind.SPOT).keys()
+            }
+            assertEquals(expected, pages)
+        }
     }
 
     @Test
@@ -425,7 +467,7 @@ class RoomMarketRepositoryTest {
         assertEquals(token, repo.getMarket(token.key))
         assertEquals(coin, repo.getMarket(coin.key))
         assertEquals(mapOf(token.key to token, coin.key to coin), repo.getMarkets(listOf(token.key, coin.key)))
-        assertEquals(listOf(token), repo.search("tsla", assetClass = AssetClass.STOCK))
+        assertEquals(listOf(token), repo.searchPage("tsla"))
     }
 
     @Test
@@ -452,4 +494,5 @@ class RoomMarketRepositoryTest {
         val dao = FakeMarketDao(listOf(marketEntity("binance:BTC/EUR").copy(assetClass = "bond")))
         assertEquals(AssetClass.CRYPTO, repository(dao, *binance()).getMarket(MarketKey("binance:BTC/EUR"))?.assetClass)
     }
+
 }

@@ -13,6 +13,7 @@ import com.neatcode.tabgreater.core.model.backup.WatchlistBackupItem
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -400,6 +401,41 @@ class RoomWatchlistRepositoryTest {
         repository.moveItemsToWatchlist(items.map { it.id }, main)
 
         assertEquals(listOf("binance:BTC/EUR"), repository.observeItems(main).first().map { it.key.value })
+    }
+
+    @Test
+    fun `rollover changes only the contract key and preserves each saved row`() = runTest {
+        val main = repository.ensureDefault()
+        val second = repository.createWatchlist("Second")
+        val old = key("hyperliquid:OUTCOME_95_SIDE_0/USDC")
+        val keep = key("binance:BTC/USDT")
+        val next = key("hyperliquid:OUTCOME_105_SIDE_0/USDC")
+        repository.addItems(main, listOf(keep, old))
+        repository.addItems(second, listOf(old, keep))
+        val firstRows = repository.observeItems(main).first()
+        val secondRows = repository.observeItems(second).first()
+        repository.setAccentColor(firstRows[1].id, 0xFF35A4D8L)
+        repository.setAccentColor(secondRows[0].id, 0xFFB877D8L)
+
+        assertTrue(repository.rolloverItem(firstRows[1].id, old, next))
+        assertTrue(repository.rolloverItem(secondRows[0].id, old, next))
+
+        val firstAfter = repository.observeItems(main).first()
+        val secondAfter = repository.observeItems(second).first()
+        assertEquals(listOf(keep, next), firstAfter.map { it.key })
+        assertEquals(listOf(next, keep), secondAfter.map { it.key })
+        assertEquals(firstRows[1].id, firstAfter[1].id)
+        assertEquals(firstRows[1].position, firstAfter[1].position)
+        assertEquals(0xFF35A4D8L, firstAfter[1].accentColor)
+        assertEquals(secondRows[0].id, secondAfter[0].id)
+        assertEquals(secondRows[0].position, secondAfter[0].position)
+        assertEquals(0xFFB877D8L, secondAfter[0].accentColor)
+
+        val otherOld = key("hyperliquid:OUTCOME_96_SIDE_0/USDC")
+        repository.addItems(main, listOf(otherOld))
+        val duplicateSource = repository.observeItems(main).first().last()
+        assertFalse(repository.rolloverItem(duplicateSource.id, otherOld, next))
+        assertEquals(listOf(keep, next, otherOld), repository.observeItems(main).first().map { it.key })
     }
 
     @Test

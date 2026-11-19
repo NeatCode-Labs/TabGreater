@@ -71,9 +71,9 @@ internal object ChartShare {
     }
 
     /** The footer's right-hand text: `KRAKEN · BTC/EUR · 1D · 2026-08-23 15:52`. */
-    fun footerText(key: MarketKey, timeframe: Timeframe, now: Long, zone: ZoneId): String {
+    fun footerText(key: MarketKey, timeframe: Timeframe, now: Long, zone: ZoneId, marketLabel: String = key.pair): String {
         val stamp = footerStamp.format(Instant.ofEpochMilli(now).atZone(zone))
-        return "${key.exchange.displayName.uppercase(Locale.ROOT)} · ${key.pair} · ${timeframe.label} · $stamp"
+        return "${key.exchange.displayName.uppercase(Locale.ROOT)} · $marketLabel · ${timeframe.label} · $stamp"
     }
 
     /** The manifest's `${'$'}{applicationId}.fileprovider`, for the debug suffix as much as for release. */
@@ -101,12 +101,13 @@ internal object ChartShare {
         timeframe: Timeframe,
         now: Long = System.currentTimeMillis(),
         zone: ZoneId = ZoneId.systemDefault(),
+        marketLabel: String = key.pair,
     ) {
         require(bounds.width() > 0 && bounds.height() > 0) { "empty capture bounds $bounds" }
         val raw = capture(activity, bounds)
         val density = activity.resources.displayMetrics.density
         val appName = activity.getString(R.string.app_name)
-        val footer = footerText(key, timeframe, now, zone)
+        val footer = footerText(key, timeframe, now, zone, marketLabel)
         val dir = File(activity.cacheDir, DIR)
         val name = fileName(key, timeframe, now, zone)
         // Everything after the copy — compositing two full-screen bitmaps and the PNG encode —
@@ -176,7 +177,11 @@ internal object ChartShare {
         text.textAlign = Paint.Align.LEFT
         canvas.drawText(left, padding, baseline, text)
         text.textAlign = Paint.Align.RIGHT
-        canvas.drawText(right, out.width - padding, baseline, text)
+        val availableWidth = (out.width - 3 * padding - text.measureText(left)).coerceAtLeast(0f)
+        val footerText = android.text.TextUtils.ellipsize(
+            right, android.text.TextPaint(text), availableWidth, android.text.TextUtils.TruncateAt.MIDDLE,
+        )
+        canvas.drawText(footerText.toString(), out.width - padding, baseline, text)
         return out
     }
 

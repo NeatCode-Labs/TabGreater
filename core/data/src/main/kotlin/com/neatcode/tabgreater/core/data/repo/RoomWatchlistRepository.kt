@@ -120,6 +120,18 @@ class RoomWatchlistRepository(
         )
     }
 
+    override suspend fun rolloverItem(itemId: Long, expectedKey: MarketKey, newKey: MarketKey): Boolean =
+        transaction {
+            if (expectedKey == newKey) return@transaction false
+            val current = itemDao.getByIds(listOf(itemId)).singleOrNull() ?: return@transaction false
+            if (current.marketKey != expectedKey.value) return@transaction false
+            if (itemDao.getByWatchlist(current.watchlistId).any {
+                    it.id != current.id && it.marketKey == newKey.value
+                }
+            ) return@transaction false
+            itemDao.replaceMarketKey(itemId, expectedKey.value, newKey.value) == 1
+        }
+
     override suspend fun removeItem(itemId: Long) {
         itemDao.delete(itemId)
     }

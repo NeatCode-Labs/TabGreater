@@ -1,6 +1,7 @@
 package com.neatcode.tabgreater.ui.chart
 
 import com.neatcode.tabgreater.core.model.Limits
+import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.SparkPeriod
@@ -169,6 +170,19 @@ class ChartViewModelTest {
 
         assertTrue(viewModel.state.value.unavailable)
         assertEquals(null, viewModel.state.value.market)
+    }
+
+    @Test
+    fun `an archived outcome retains its question and side after the live market disappears`() = runTest(dispatcher) {
+        val outcomeKey = MarketKey("hyperliquid:OUTCOME_123_YES/USDC")
+        val outcome = Market(outcomeKey, "#1230", 4, active = false, displayName = "Will BTC close above target? · Yes")
+        val repository = FakeMarketRepository(mutableMapOf(outcomeKey to outcome))
+        val viewModel = ChartViewModel(outcomeKey, repository, watchlists, live, sparklines, chartSettings, appSettings, drawingState)
+        collecting(viewModel)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.unavailable)
+        assertEquals(outcome.displayName, viewModel.state.value.pair)
     }
 
     @Test

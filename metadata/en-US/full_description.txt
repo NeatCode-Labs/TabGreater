@@ -1,4 +1,4 @@
-TabGreater is a crypto watchlist for Android. It shows live spot prices from five exchanges as a grid of tiles, each with its own mini-chart, and puts the pairs you care about on your home screen. There is no account to create, no ads, no tracking and no backend of any kind — your phone talks to the exchanges directly.
+Track spot pairs, perpetual contracts and event outcomes on Android. Build watchlists across six exchanges, open charts and put the markets you follow on your home screen. Your phone gets prices directly from each exchange. No account, ads or tracking.
 
 <b>Watchlists</b>
 
@@ -9,7 +9,7 @@ TabGreater is a crypto watchlist for Android. It shows live spot prices from fiv
 
 <b>Live prices</b>
 
-* A WebSocket stream while the app is open on Binance, Gate.io, Kraken and KuCoin; MEXC has no public ticker socket and is polled over REST
+* While the app is open, Binance, Gate.io, Hyperliquid, Kraken and KuCoin use live streams. MEXC prices refresh over REST.
 * Saved watchlist prices and mini-chart history remain available when present on the device; Cached, Old and History labels distinguish unconfirmed prices, stale prices and unverified history
 * Refresh failures have a Retry action; full charts need a successful data request for the selected pair and interval
 * Prices in en-US formatting, with signed percentages and "shrink zeros" for sub-cent pairs (0.0₄123)
@@ -29,16 +29,15 @@ TabGreater is a crypto watchlist for Android. It shows live spot prices from fiv
 * A refresh cadence of your choice, from timed updates to a live connection
 * Android may show a system notification while the foreground service keeps widgets updated; TabGreater does not request notification permission or send price alerts
 
-<b>Tokenized stocks</b>
+<b>Find a market</b>
 
-* A Crypto | Stocks switch when you add a pair or set up a widget; Crypto, the default, shows coins only
-* Stocks finds the stock tokens the five exchanges list as spot pairs by the share's ticker (TSLA brings up the TSLA tokens across the exchanges), with popular tickers one tap away
-* On tiles, charts and widgets a stock token works like any other pair
-* These are tokens trading on crypto exchanges, not stock-exchange quotes: prices can differ from the share price and between exchanges, some exchanges trade them only on weekdays, and coverage is mostly US large caps and ETFs
+* Search by name, symbol or event. Filter by instrument type and source, then scroll for more results.
+* Find tokenized shares by their listed symbol. Their prices come from trading on the exchange.
+* Follow Hyperliquid outcomes by side. For supported daily price events, a saved card rolls to the next confirmed contract when you open your watchlists.
 
 <b>Exchanges</b>
 
-Spot markets from Binance, Gate.io, Kraken, KuCoin and MEXC. Exchange names are trademarks of their respective owners; TabGreater is not affiliated with, endorsed by or sponsored by any exchange.
+Spot markets from Binance, Gate.io, Hyperliquid, Kraken, KuCoin and MEXC, plus Hyperliquid perpetual contracts and event outcomes. Exchange names are trademarks of their respective owners. TabGreater is independent of the exchanges.
 
 <b>Privacy</b>
 

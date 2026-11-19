@@ -172,7 +172,9 @@ class TileMathTest {
     fun `the percentage inside the brackets is always unsigned`() {
         assertEquals("+2.920 (2.73%)", absChangeText(2.92, 2.73, 3))
         assertEquals("-2.920 (2.73%)", absChangeText(-2.92, -2.73, 3))
-        assertEquals("0.00 (0.00%)", absChangeText(0.0, 0.0, 2))
+        assertNull(absChangeText(0.0, 0.0, 2))
+        assertNull(absChangeText(0.00000000002, 0.10, 10))
+        assertNull(absChangeText(-0.00000000002, -0.10, 10))
     }
 
     @Test

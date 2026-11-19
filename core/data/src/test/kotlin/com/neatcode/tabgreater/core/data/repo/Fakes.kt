@@ -135,6 +135,13 @@ internal class FakeWatchlistItemDao : WatchlistItemDao {
         rows.value = rows.value.map { if (it.id == item.id) item else it }
     }
 
+    override suspend fun replaceMarketKey(id: Long, expectedMarketKey: String, marketKey: String): Int {
+        val current = rows.value.firstOrNull { it.id == id && it.marketKey == expectedMarketKey } ?: return 0
+        if (conflicts(current.copy(marketKey = marketKey))) return 0
+        rows.value = rows.value.map { if (it.id == id) it.copy(marketKey = marketKey) else it }
+        return 1
+    }
+
     override suspend fun updateAll(items: List<WatchlistItemEntity>) {
         for (item in items) update(item)
     }
@@ -268,6 +275,8 @@ internal class FakeMarketDao(seed: List<MarketEntity> = emptyList()) : MarketDao
     private val rows = LinkedHashMap<String, MarketEntity>()
     var deleteStaleCalls: Int = 0
         private set
+    var deactivateStaleCalls: Int = 0
+        private set
 
     init {
         seed.forEach { rows[it.marketKey] = it }
@@ -276,57 +285,77 @@ internal class FakeMarketDao(seed: List<MarketEntity> = emptyList()) : MarketDao
     val all: List<MarketEntity> get() = rows.values.toList()
 
     override suspend fun getByExchange(exchange: String): List<MarketEntity> =
-        rows.values.filter { it.exchange == exchange && it.active }.sortedWith(order)
+        rows.values.filter { it.exchange == exchange && it.active }.sortedWith(compareBy({ it.exchange }, { it.base }, { it.quote }))
 
     override suspend fun getByKeys(keys: List<String>): List<MarketEntity> = keys.mapNotNull { rows[it] }
 
     override suspend fun getByKey(key: String): MarketEntity? = rows[key]
+
+    override suspend fun getUpcomingOutcomeSeries(
+        exchange: String,
+        seriesId: String,
+        side: String,
+        quote: String,
+        afterEpochMs: Long,
+    ): List<MarketEntity> = rows.values.filter {
+        it.exchange == exchange && it.rolloverSeriesId == seriesId && it.outcomeSide?.lowercase() == side &&
+            it.quote == quote && it.active &&
+            it.expiresAt?.let { expiry -> expiry > afterEpochMs } == true
+    }.sortedBy { it.expiresAt }
 
     override suspend fun count(exchange: String): Int = rows.values.count { it.exchange == exchange }
 
     override suspend fun lastUpdated(exchange: String): Long? =
         rows.values.filter { it.exchange == exchange }.maxOfOrNull { it.updatedAt }
 
-    // Like the SQL, every search filters on the asset class before it applies the limit.
-    override suspend fun search(prefix: String, pattern: String, assetClass: String?, limit: Int): List<MarketEntity> =
-        rows.values.asSequence()
-            .filter { it.active && it.isIn(assetClass) }
-            .filter { it.base.startsWith(prefix) || it.quote.startsWith(prefix) || like("${it.base}/${it.quote}", pattern) }
-            .sortedWith(order)
-            .take(limit)
-            .toList()
-
-    override suspend fun searchPair(base: String, quotePrefix: String, assetClass: String?, limit: Int): List<MarketEntity> =
-        rows.values.asSequence()
-            .filter { it.active && it.isIn(assetClass) }
-            .filter { row ->
-                val pinned = base.isEmpty() || row.base == base || (assetClass == "stock" && row.underlying == base)
-                pinned && row.quote.startsWith(quotePrefix)
-            }
-            .sortedWith(order)
-            .take(limit)
-            .toList()
-
-    override suspend fun searchConcatCandidates(query: String, assetClass: String?, limit: Int): List<MarketEntity> =
-        rows.values.asSequence()
-            .filter { it.active && it.isIn(assetClass) && query.startsWith(it.base) }
-            .sortedWith(order)
-            .take(limit)
-            .toList()
-
-    override suspend fun popularUnderlyings(assetClass: String, exchanges: List<String>, limit: Int): List<String> =
-        rows.values
-            .filter { it.active && it.assetClass == assetClass && it.exchange in exchanges }
-            .mapNotNull { row -> row.underlying?.let { it to row.exchange } }
-            .groupBy({ it.first }, { it.second })
-            .entries
-            .sortedWith(
-                compareByDescending<Map.Entry<String, List<String>>> { it.value.distinct().size }
-                    .thenByDescending { it.value.size }
-                    .thenBy { it.key },
-            )
-            .take(limit)
-            .map { it.key }
+    override suspend fun searchCatalog(
+        searchText: String,
+        pairSearch: Boolean,
+        pairDisplayPrefix: String,
+        compactPrefix: String,
+        compactQuery: String,
+        hasSlash: Boolean,
+        exactBase: String,
+        quotePrefix: String,
+        instrumentKind: String?,
+        exchange: String?,
+        exchanges: List<String>,
+        limit: Int,
+        offset: Int,
+    ): List<MarketEntity> = rows.values.asSequence()
+        .filter { it.active && it.exchange in exchanges }
+        .filter { instrumentKind == null || it.instrumentKind == instrumentKind }
+        .filter { exchange == null || it.exchange == exchange }
+        .filter { row ->
+            searchText.isEmpty() ||
+                (pairSearch && (exactBase.isEmpty() || row.base == exactBase || row.underlying == exactBase || row.nativeSymbol.equals(exactBase, ignoreCase = true)) &&
+                    row.quote.startsWith(quotePrefix)) ||
+                (!hasSlash && compactPrefix.isNotEmpty() && (row.base.startsWith(compactPrefix) || row.quote.startsWith(compactPrefix) ||
+                    row.underlying?.startsWith(compactPrefix) == true || (row.base + row.quote).startsWith(compactQuery))) ||
+                (pairSearch && row.displayName?.uppercase()?.startsWith(pairDisplayPrefix) == true) ||
+                (!pairSearch && listOfNotNull(
+                    row.displayName, row.description, row.nativeSymbol, row.venue, row.unit,
+                    row.underlying, row.outcomeSide, row.eventId, row.outcomeId,
+                ).any { it.contains(searchText, ignoreCase = true) })
+        }
+        .sortedWith(
+            compareBy<MarketEntity>(
+                { row ->
+                    when {
+                        row.underlying == compactPrefix -> 0
+                        row.base == compactPrefix -> 1
+                        else -> 2
+                    }
+                },
+                { it.exchange },
+                { it.base },
+                { it.quote },
+                { it.marketKey },
+            ),
+        )
+        .drop(offset)
+        .take(limit)
+        .toList()
 
     override suspend fun upsertAll(markets: List<MarketEntity>) {
         markets.forEach { rows[it.marketKey] = it }
@@ -341,16 +370,14 @@ internal class FakeMarketDao(seed: List<MarketEntity> = emptyList()) : MarketDao
         rows.values.removeAll { it.exchange == exchange && it.updatedAt < refreshedAt }
     }
 
-    /** `(:assetClass IS NULL OR asset_class = :assetClass)` */
-    private fun MarketEntity.isIn(assetClass: String?): Boolean = assetClass == null || this.assetClass == assetClass
-
-    /** Only the `prefix || '%'` shape is used by the repository. */
-    private fun like(value: String, pattern: String): Boolean =
-        value.startsWith(pattern.removeSuffix("%"))
-
-    private companion object {
-        val order = compareBy<MarketEntity>({ it.exchange }, { it.base }, { it.quote })
+    override suspend fun deactivateStale(exchange: String, refreshedAt: Long) {
+        deactivateStaleCalls++
+        rows.entries.toList().forEach { (key, row) ->
+            if (row.exchange == exchange && row.updatedAt < refreshedAt) rows[key] = row.copy(active = false)
+        }
     }
+
+
 }
 
 /** Minimal [ExchangeAdapter] so an [com.neatcode.tabgreater.core.exchange.ExchangeRegistry] can be built. */
@@ -358,6 +385,7 @@ internal class FakeExchangeAdapter(
     override val id: ExchangeId,
     private val instruments: List<Market> = emptyList(),
     private val failure: Exception? = null,
+    private val complete: Boolean = true,
 ) : ExchangeAdapter {
 
     var listMarketsCalls: Int = 0
@@ -370,6 +398,9 @@ internal class FakeExchangeAdapter(
         failure?.let { throw it }
         return instruments
     }
+
+    override suspend fun listMarketSnapshot() =
+        com.neatcode.tabgreater.core.exchange.MarketSnapshot(listMarkets(), complete)
 
     override suspend fun fetchTickers(markets: List<Market>): List<Ticker> = emptyList()
 

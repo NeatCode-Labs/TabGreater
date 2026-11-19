@@ -46,6 +46,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
+private val monotonicClock: () -> Long = SystemClock::elapsedRealtime
+private val wallClock: () -> Long = System::currentTimeMillis
+
 /**
  * Merges three sources of prices into one map per collector:
  *
@@ -62,8 +65,8 @@ class LiveMarketDataRepository(
     private val markets: MarketRepository,
     private val registry: ExchangeRegistry,
     private val scope: CoroutineScope,
-    private val elapsed: () -> Long = SystemClock::elapsedRealtime,
-    private val epoch: () -> Long = System::currentTimeMillis,
+    private val elapsed: () -> Long = monotonicClock,
+    private val epoch: () -> Long = wallClock,
 ) : MarketDataRepository {
 
     private val tracker = SubscriptionTracker()
@@ -176,7 +179,17 @@ class LiveMarketDataRepository(
                     if ((versions[key] ?: 0L) == started[key]) acceptLocked(ticker, true)
                     lastRestAt[key] = elapsed()
                 }
-                for (key in missing) if ((versions[key] ?: 0L) == started[key]) markFailure(key, ExchangeFailureKind.INVALID_MARKET)
+                for (key in missing) {
+                    if ((versions[key] ?: 0L) != started[key]) continue
+                    // A newly listed outcome or spot pair may have a valid, empty trade tape.
+                    if (exchange == ExchangeId.HYPERLIQUID && key in batch.missing) {
+                        accepted.update { states ->
+                            states + (key to (states[key] ?: MarketState()).copy(failure = null, retryAfterMs = 0))
+                        }
+                    } else {
+                        markFailure(key, ExchangeFailureKind.INVALID_MARKET)
+                    }
+                }
                 for ((key, error) in batch.failures) {
                     if ((versions[key] ?: 0L) == started[key])
                         markFailure(key, error.exchangeFailureKind(), error.retryDelayMs())
@@ -264,6 +277,8 @@ class LiveMarketDataRepository(
     private fun acceptLocked(ticker: Ticker, rest: Boolean) {
         if (!ticker.last.isFinite() || ticker.last <= 0) return
         val previous = accepted.value[ticker.key]
+        if (ticker.key.exchange == ExchangeId.HYPERLIQUID && previous?.ticker != null &&
+            ticker.timestamp < previous.ticker.timestamp) return
         val value = if (!ticker.confirmsPrice && previous?.ticker != null)
             previous.ticker.copy(bid = ticker.bid, ask = ticker.ask) else ticker
         if (!rest && ticker.confirmsPrice) {
@@ -398,7 +413,7 @@ class LiveMarketDataRepository(
             markets.refreshMarkets(exchange).getOrThrow()
             found = markets.getMarkets(keys)
         }
-        return keys.mapNotNull { found[it] }
+        return keys.mapNotNull { found[it]?.takeIf(Market::active) }
     }
 
     private suspend fun persist(tickers: List<Ticker>) {

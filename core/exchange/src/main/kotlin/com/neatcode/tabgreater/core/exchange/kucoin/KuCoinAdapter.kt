@@ -8,8 +8,6 @@ import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
 import com.neatcode.tabgreater.core.exchange.ExchangeAdapter
 import com.neatcode.tabgreater.core.exchange.ExchangeHttpException
 import com.neatcode.tabgreater.core.exchange.ExchangeUnavailableException
-import com.neatcode.tabgreater.core.exchange.StockTokens
-import com.neatcode.tabgreater.core.exchange.classified
 import com.neatcode.tabgreater.core.exchange.ohlc.CandleAggregator
 import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.exchange.ws.ExchangeSocket
@@ -111,7 +109,7 @@ class KuCoinAdapter(
                     nativeSymbol = dto.symbol,
                     pricePrecision = dto.priceIncrement?.let(::decimalsOf) ?: DEFAULT_PRICE_PRECISION,
                     tickSize = dto.priceIncrement?.toDoubleOrNull(),
-                ).classified(StockTokens.kucoin(dto.baseCurrency, dto.market))
+                )
             }
             .toList()
     }

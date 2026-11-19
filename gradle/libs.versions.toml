@@ -40,6 +40,7 @@ okhttp = "5.4.0"
 junit = "4.13.2"
 turbine = "1.2.1"
 androidxTestExt = "1.3.0"
+androidxTestRunner = "1.7.0"
 espresso = "3.7.0"
 
 [libraries]
@@ -91,6 +92,7 @@ okhttp-mockwebserver3 = { group = "com.squareup.okhttp3", name = "mockwebserver3
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExt" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 
 [plugins]

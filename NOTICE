@@ -29,7 +29,7 @@ WorkManager, Glance, WebKit, Core SplashScreen) — Apache License 2.0, The Andr
 OkHttp — Apache License 2.0, Square, Inc.
 Koin — Apache License 2.0, Kotzilla and contributors
 
-Market data is fetched by the app directly from the public APIs of Binance, Gate.io, Kraken,
-KuCoin and MEXC; the list of popular pairs is powered by CoinGecko. Exchange names are trademarks
+Market data is fetched by the app directly from the public APIs of Binance, Gate.io, Hyperliquid,
+Kraken, KuCoin and MEXC. The list of popular pairs is powered by CoinGecko. Exchange names are trademarks
 of their respective owners. TabGreater is an independent project and is not affiliated with,
 endorsed by or sponsored by any exchange or data provider.

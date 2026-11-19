@@ -6,6 +6,7 @@ import com.neatcode.tabgreater.core.exchange.ratelimit.TokenBucket
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.ExchangeId
 import com.neatcode.tabgreater.core.model.Market
+
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.Timeframe
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +20,7 @@ import mockwebserver3.SocketEffect
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -87,7 +89,7 @@ class KrakenAdapterRestTest {
     }
 
     @Test
-    fun `listMarkets adds the share-equivalent tokenized pairs as stocks`() = runTest {
+    fun `listMarkets adds tokenized rows without guessing their underlying subtype`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
         server.enqueue(MockResponse.Builder().code(200).body(TOKENIZED_PAIRS).build())
 
@@ -106,12 +108,12 @@ class KrakenAdapterRestTest {
         // The share-equivalent id, as Ticker and OHLC need it; the canonical key is upper-cased.
         assertEquals("AAPLxUSD", apple.nativeSymbol)
         assertEquals(AssetClass.STOCK, apple.assetClass)
-        assertEquals("AAPL", apple.underlying)
+        assertNull(apple.underlying)
         assertEquals(2, apple.pricePrecision)
         assertEquals(0.01, apple.tickSize!!, 1e-12)
         val amd = markets.first { it.key.value == "kraken:AMDX/USD" }
         assertEquals("AMDxUSD", amd.nativeSymbol)
-        assertEquals("AMD", amd.underlying)
+        assertNull(amd.underlying)
         assertEquals(4, markets.first { it.key.value == "kraken:TQQQX/USD" }.pricePrecision)
         assertTrue(markets.none { it.nativeSymbol.contains("SPV") })
         assertTrue(markets.take(4).all { it.assetClass == AssetClass.CRYPTO && it.underlying == null })
@@ -123,60 +125,59 @@ class KrakenAdapterRestTest {
     }
 
     @Test
-    fun `listMarkets returns the crypto markets when Kraken refuses the tokenized class`() = runTest {
+    fun `a refused tokenized catalogue marks the snapshot incomplete`() = runTest {
         val logs = ArrayList<String>()
         val logging = loggingAdapter(logs)
         server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
         // Kraken's live answer to an asset class it does not offer.
         server.enqueue(MockResponse.Builder().code(200).body(INVALID_ARGUMENTS_ERROR).build())
 
-        val markets = logging.listMarkets()
+        val snapshot = logging.listMarketSnapshot()
 
         assertEquals(
             listOf("kraken:BTC/EUR", "kraken:ETH/BTC", "kraken:DOGE/EUR", "kraken:ADA/EUR"),
-            markets.map { it.key.value },
+            snapshot.markets.map { it.key.value },
         )
+        assertFalse(snapshot.isComplete)
         assertEquals(2, server.requestCount)
-        // Logged, not silent: a missing Stocks catalogue must be traceable.
-        assertTrue(logs.toString(), logs.any { it.contains("EGeneral:Invalid arguments") })
+        assertTrue(logs.toString(), logs.any { it.contains("incomplete") })
     }
 
     /** Not offered in this region: the stocks could not be served there anyway, the coins still can. */
     @Test
-    fun `listMarkets returns the crypto markets when the tokenized catalogue is blocked in this region`() = runTest {
+    fun `a region restricted tokenized catalogue marks the snapshot incomplete`() = runTest {
         val logs = ArrayList<String>()
         val logging = loggingAdapter(logs)
         server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
         server.enqueue(MockResponse.Builder().code(451).body("blocked").build())
 
-        val markets = logging.listMarkets()
+        val snapshot = logging.listMarketSnapshot()
 
         assertEquals(
             listOf("kraken:BTC/EUR", "kraken:ETH/BTC", "kraken:DOGE/EUR", "kraken:ADA/EUR"),
-            markets.map { it.key.value },
+            snapshot.markets.map { it.key.value },
         )
-        assertTrue(logs.toString(), logs.any { it.contains("HTTP 451") })
+        assertFalse(snapshot.isComplete)
+        assertTrue(logs.toString(), logs.any { it.contains("unavailable") })
     }
 
     /** Kraken's retryable outages arrive with HTTP 200 as well; none of them says the class is gone. */
     @Test
-    fun `listMarkets fails when the tokenized catalogue hits a temporary Kraken error`() = runTest {
+    fun `a temporary tokenized catalogue error marks the snapshot incomplete`() = runTest {
         for (code in listOf("EService:Unavailable", "EGeneral:Internal error")) {
             server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
             server.enqueue(MockResponse.Builder().code(200).body("""{"error":["$code"]}""").build())
 
-            val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
-
-            assertTrue("expected ExchangeHttpException for $code, got $error", error is ExchangeHttpException)
-            assertEquals(com.neatcode.tabgreater.core.exchange.ExchangeFailureKind.TRANSIENT, (error as ExchangeHttpException).kind)
-            assertTrue(error!!.message!!, error.message!!.contains(code))
+            val snapshot = adapter.listMarketSnapshot()
+            assertFalse(code, snapshot.isComplete)
+            assertEquals(4, snapshot.markets.size)
         }
         assertEquals(4, server.requestCount)
     }
 
     /** A crypto-only answer would make the repository delete every stored Kraken stock row. */
     @Test
-    fun `listMarkets fails when the tokenized catalogue does not arrive`() = runTest {
+    fun `a missing tokenized catalogue returns an incomplete snapshot`() = runTest {
         // No transparent retry, so the dropped connection reaches the adapter as it would in the field.
         val noRetry = client.newBuilder().retryOnConnectionFailure(false).build()
         val dropping = KrakenAdapter(
@@ -191,32 +192,30 @@ class KrakenAdapterRestTest {
                 .onResponseStart(SocketEffect.ShutdownConnection).build(),
         )
 
-        val error = runCatching { dropping.listMarkets() }.exceptionOrNull()
-
-        assertTrue("expected IOException, got $error", error is IOException)
+        val snapshot = dropping.listMarketSnapshot()
+        assertFalse(snapshot.isComplete)
+        assertEquals(4, snapshot.markets.size)
     }
 
     @Test
-    fun `listMarkets fails when the tokenized catalogue gets an http error`() = runTest {
+    fun `an http error in the tokenized catalogue returns an incomplete snapshot`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
         server.enqueue(MockResponse.Builder().code(503).body("EService:Unavailable").build())
 
-        val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
-
-        assertTrue("expected ExchangeHttpException, got $error", error is ExchangeHttpException)
-        assertEquals(503, (error as ExchangeHttpException).code)
+        val snapshot = adapter.listMarketSnapshot()
+        assertFalse(snapshot.isComplete)
+        assertEquals(4, snapshot.markets.size)
     }
 
     @Test
-    fun `listMarkets fails when the tokenized catalogue is throttled`() = runTest {
+    fun `a throttled tokenized catalogue returns an incomplete snapshot`() = runTest {
         server.enqueue(MockResponse.Builder().code(200).body(ASSET_PAIRS).build())
         // Kraken's throttle arrives as an `E` error with HTTP 200, but it says nothing about the class.
         server.enqueue(MockResponse.Builder().code(200).body(RATE_LIMIT_ERROR).build())
 
-        val error = runCatching { adapter.listMarkets() }.exceptionOrNull()
-
-        assertTrue("expected ExchangeHttpException, got $error", error is ExchangeHttpException)
-        assertTrue(error!!.message!!, error.message!!.contains("rate limit"))
+        val snapshot = adapter.listMarketSnapshot()
+        assertFalse(snapshot.isComplete)
+        assertEquals(4, snapshot.markets.size)
     }
 
     @Test

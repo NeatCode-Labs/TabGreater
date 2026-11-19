@@ -74,6 +74,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.neatcode.tabgreater.R
+import com.neatcode.tabgreater.core.model.ExchangeId
+import com.neatcode.tabgreater.core.model.InstrumentKind
+import com.neatcode.tabgreater.ui.contextLabel
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.TGDimens
@@ -149,7 +152,7 @@ fun ChartScreen(
     val drawingState by viewModel.drawingState.collectAsStateWithLifecycle()
     val drawingCommand by viewModel.drawingCommand.collectAsStateWithLifecycle()
     val availability by bridge.availability.collectAsStateWithLifecycle()
-    val chartTarget = state.market?.let { ChartTarget(it.key, state.settings.timeframe) }
+    val chartTarget = state.market?.takeIf { it.active }?.let { ChartTarget(it.key, state.settings.timeframe) }
     val chartAvailability = when (val current = availability) {
         is ChartAvailability.Ready -> if (current.target == chartTarget) current else ChartAvailability.Loading(chartTarget)
         is ChartAvailability.Unsupported -> if (current.target == chartTarget) current else ChartAvailability.Loading(chartTarget)
@@ -216,7 +219,7 @@ fun ChartScreen(
                 withFrameNanos { }
                 withFrameNanos { }
                 delay(SHARE_SETTLE_MS)
-                ChartShare.share(host, rect, state.key, state.settings.timeframe)
+                ChartShare.share(host, rect, state.key, state.settings.timeframe, marketLabel = state.pair)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -280,6 +283,14 @@ fun ChartScreen(
                             onToggleStar = viewModel::toggleStar,
                         )
                     } else {
+                        state.market?.takeIf { it.exchange == ExchangeId.HYPERLIQUID }?.let { market ->
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                                if (market.instrumentKind == InstrumentKind.OUTCOME) {
+                                    Text(state.pair, style = TGType.pair, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text(market.contextLabel(), style = TGType.subLabel)
+                            }
+                        }
                         ChartStats(state)
                     }
                     HorizontalDivider(thickness = 1.dp, color = TG.Outline)
@@ -288,7 +299,7 @@ fun ChartScreen(
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     val canvasHeight = maxHeight
                     val market = state.market
-                    if (market != null) {
+                    if (market != null && market.active) {
                         ChartView(
                             market = market,
                             timeframe = state.settings.timeframe,
@@ -576,7 +587,10 @@ private fun ChartHeader(
                 ExchangeGlyph(state.key.exchange, size = 10.dp)
             }
             Spacer(Modifier.height(2.dp))
-            Text(text = state.pair, style = TGType.pair, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val label = if (!compactStats && state.market?.instrumentKind == InstrumentKind.OUTCOME) {
+                stringResource(R.string.market_kind_outcome)
+            } else state.pair
+            Text(text = label, style = TGType.pair, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {

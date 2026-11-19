@@ -39,8 +39,12 @@ class WidgetLayoutTest {
         textWidthDp(pairName, p.pairSp, fontScale) +
             if (p.showBadge) p.headerGapDp + p.badgeDp else 0f
 
-    private fun priceNeed(p: WidgetPlan, priceText: String = price, fontScale: Float = 1f): Float =
-        textWidthDp(priceText, p.priceSp, fontScale) + p.priceGapDp +
+    private fun priceNeed(
+        p: WidgetPlan,
+        priceText: String = price,
+        fontScale: Float = 1f,
+    ): Float = textWidthDp(priceText, p.priceSp, fontScale) +
+            p.priceGapDp +
             textWidthDp(change, p.changeSp, fontScale)
 
     private fun textHeight(p: WidgetPlan, fontScale: Float = 1f): Float =
@@ -206,6 +210,16 @@ class WidgetLayoutTest {
                 assertEquals(REF_PRICE_GAP_DP * p.scale, p.priceGapDp, EPS)
             }
         }
+    }
+
+    @Test
+    fun `a widget with a unit in its headline leaves space for the price and change`() {
+        val slotW = 153f
+        val slotH = 92f
+        val p = plan(slotW, slotH, pairName = "Yes · OKC Thunder · USDC")
+        val innerW = slotW - 2 * horizontalPaddingDp(slotH)
+
+        assertTrue("price and change fit", priceNeed(p) <= innerW)
     }
 
     @Test

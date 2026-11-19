@@ -61,6 +61,12 @@ object PriceFormat {
         return if (negative) "-" + group(plain) else group(plain)
     }
 
+    /** Compact card/widget price: rounds to source precision, then removes only trailing zeroes. */
+    fun formatPriceCompact(value: Double, precision: Int): String =
+        formatPrice(value, precision).let { formatted ->
+            if (formatted == NO_VALUE) formatted else trimFractionZeros(formatted)
+        }
+
     /**
      * Formats a signed percentage with 2 decimals: `+6.52%`, `-3.47%`.
      * A value that rounds to zero is rendered without a sign (`0.00%`); `null` gives [NO_VALUE].
@@ -172,6 +178,34 @@ object PriceFormat {
         return ShrunkPrice(prefix = if (negative) "-0.0" else "0.0", zeroCount = zeros, rest = rest)
     }
 
+    /** Compact display form for exchange units, e.g. `USD per share` → `USD/share`. */
+    fun compactUnit(unit: String?): String? {
+        val value = unit?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        val separator = Regex("\\s+per\\s+", RegexOption.IGNORE_CASE)
+        val match = separator.find(value) ?: return value
+        val base = value.substring(0, match.range.first).trim()
+        var denominator = value.substring(match.range.last + 1).trim()
+        denominator = when (denominator.lowercase()) {
+            "contract unit" -> "contract"
+            "outcome token" -> "token"
+            else -> denominator
+        }
+        return if (base.isEmpty() || denominator.isEmpty()) value else "$base/$denominator"
+    }
+
+    /** The short denomination for a card caption. A pair such as AAPL/USDC already names it. */
+    fun cardUnit(unit: String?, displayedPair: String): String? {
+        val value = compactUnit(unit) ?: return null
+        val label = when {
+            value.equals("index points", ignoreCase = true) -> "pts"
+            value.substringAfter('/', "") in setOf("token", "share", "contract") -> value.substringBefore('/')
+            else -> value
+        }
+        return label.takeUnless {
+            displayedPair.equals(it, ignoreCase = true) || displayedPair.endsWith("/$it", ignoreCase = true)
+        }
+    }
+
     /** Inserts `,` every three digits into the integer part of an unsigned plain decimal string. */
     private fun group(plain: String): String {
         val dot = plain.indexOf(DECIMAL_SEPARATOR)
@@ -186,5 +220,12 @@ object PriceFormat {
         }
         out.append(fraction)
         return out.toString()
+    }
+
+    private fun trimFractionZeros(plain: String): String {
+        val dot = plain.indexOf(DECIMAL_SEPARATOR)
+        if (dot < 0) return plain
+        val fraction = plain.substring(dot + 1).trimEnd('0')
+        return if (fraction.isEmpty()) plain.substring(0, dot) else plain.substring(0, dot + 1) + fraction
     }
 }

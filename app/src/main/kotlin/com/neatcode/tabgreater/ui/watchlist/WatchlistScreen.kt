@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,7 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -32,6 +34,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import com.neatcode.tabgreater.R
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.TGDimens
+import com.neatcode.tabgreater.core.model.TileSize
 import com.neatcode.tabgreater.ui.components.AddTickerFab
 import com.neatcode.tabgreater.ui.components.TGAppBar
 import com.neatcode.tabgreater.ui.manager.WatchlistManagerSheet
@@ -130,42 +133,77 @@ fun WatchlistScreen(
                     modifier = Modifier.align(Alignment.Center),
                 )
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(state.tileSize.columns),
-                    modifier = Modifier.fillMaxSize(),
-                    state = gridState,
-                    contentPadding = PaddingValues(
-                        start = TGDimens.GRID_MARGIN_DP.dp,
-                        end = TGDimens.GRID_MARGIN_DP.dp,
-                        // The chip row's own 8 dp bottom pad is the gap to the first tile row.
-                        top = 0.dp,
-                        // Tiles scroll under the FAB, but the last row can still scroll clear of it.
-                        bottom = (TGDimens.GRID_GAP_DP + TGDimens.FAB_H_DP + 16).dp,
-                    ),
-                    horizontalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
-                    verticalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
-                ) {
-                    items(state.tiles, key = { it.itemId }) { tile ->
-                        val dragging = tile.itemId == reorder.draggingItemId
-                        TickerTile(
-                            tile = tile,
-                            size = state.tileSize,
-                            modifier = Modifier
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val density = LocalDensity.current
+                    val gridWidthPx = with(density) { maxWidth.roundToPx() }
+                    val gridMarginPx = with(density) { TGDimens.GRID_MARGIN_DP.dp.roundToPx() }
+                    val gridGapPx = with(density) { TGDimens.GRID_GAP_DP.dp.roundToPx() }
+                    val gridColumnsWidthPx = (gridWidthPx - 2 * gridMarginPx - gridGapPx).coerceAtLeast(0)
+                    val firstSmallColumnIsOnePixelWider =
+                        state.tileSize == TileSize.SMALL && gridColumnsWidthPx % 2 != 0
+
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(state.tileSize.columns),
+                        modifier = Modifier.fillMaxSize(),
+                        state = gridState,
+                        contentPadding = PaddingValues(
+                            start = TGDimens.GRID_MARGIN_DP.dp,
+                            end = TGDimens.GRID_MARGIN_DP.dp,
+                            // The chip row's own 8 dp bottom pad is the gap to the first tile row.
+                            top = 0.dp,
+                            // Tiles scroll under the FAB, but the last row can still scroll clear of it.
+                            bottom = (TGDimens.GRID_GAP_DP + TGDimens.FAB_H_DP + 16).dp,
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
+                        verticalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
+                    ) {
+                        itemsIndexed(state.tiles, key = { _, tile -> tile.itemId }) { index, tile ->
+                            val dragging = tile.itemId == reorder.draggingItemId
+                            val itemModifier = Modifier
                                 .fillMaxWidth()
                                 // The tile under the finger must not also animate to its new slot.
                                 .then(if (dragging) Modifier else Modifier.animateItem())
-                                .reorderable(reorder, tile.itemId, enabled = !state.isSelecting)
-                                .clickable {
-                                    when {
-                                        // The release that ends a long press is not a tap.
-                                        reorder.consumeLongPress() -> Unit
-                                        state.isSelecting -> viewModel.toggleSelection(tile.itemId)
-                                        else -> onOpenChart(tile.key)
-                                    }
-                                },
-                            selected = tile.itemId in state.selectedIds,
-                            shrinkZeros = state.shrinkZeros,
-                        )
+                            val peer = if (state.tileSize == TileSize.SMALL) {
+                                state.tiles.getOrNull(if (index % 2 == 0) index + 1 else index - 1)
+                            } else {
+                                null
+                            }
+                            if (peer != null) {
+                                SmallTileCell(
+                                    tile = tile,
+                                    peer = peer,
+                                    selectedIds = state.selectedIds,
+                                    isSelecting = state.isSelecting,
+                                    shrinkZeros = state.shrinkZeros,
+                                    reorder = reorder,
+                                    peerWidthAdjustmentPx = if (firstSmallColumnIsOnePixelWider) {
+                                        if (index % 2 == 0) -1 else 1
+                                    } else {
+                                        0
+                                    },
+                                    modifier = itemModifier,
+                                    onOpenChart = onOpenChart,
+                                    onToggleSelection = viewModel::toggleSelection,
+                                )
+                            } else {
+                                TickerTile(
+                                    tile = tile,
+                                    size = state.tileSize,
+                                    modifier = itemModifier
+                                        .reorderable(reorder, tile.itemId, enabled = !state.isSelecting)
+                                        .clickable {
+                                            when {
+                                                // The release that ends a long press is not a tap.
+                                                reorder.consumeLongPress() -> Unit
+                                                state.isSelecting -> viewModel.toggleSelection(tile.itemId)
+                                                else -> onOpenChart(tile.key)
+                                            }
+                                        },
+                                    selected = tile.itemId in state.selectedIds,
+                                    shrinkZeros = state.shrinkZeros,
+                                )
+                            }
+                        }
                     }
                 }
             }

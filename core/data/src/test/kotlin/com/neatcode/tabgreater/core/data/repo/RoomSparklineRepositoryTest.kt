@@ -5,6 +5,7 @@ import com.neatcode.tabgreater.core.exchange.ExchangeRegistry
 import com.neatcode.tabgreater.core.model.AssetClass
 import com.neatcode.tabgreater.core.model.Candle
 import com.neatcode.tabgreater.core.model.ExchangeId
+import com.neatcode.tabgreater.core.model.InstrumentKind
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
 import com.neatcode.tabgreater.core.model.SparkPeriod
@@ -122,6 +123,28 @@ class RoomSparklineRepositoryTest {
         assertFalse(completed)
     }
 
+    @Test
+    fun `an archived market keeps its cached sparkline without network requests`() = runTest {
+        val now = System.currentTimeMillis()
+        candleDao.upsertAll(listOf(candleEntity(key.value, now, PERIOD.timeframe.id)))
+        markets.publish(market(key.value).copy(active = false))
+        val adapter = RecordingAdapter(ExchangeId.BINANCE)
+        val repository = repository(adapter)
+
+        repository.refresh(listOf(key), PERIOD)
+        assertEquals(0, adapter.ohlcvCalls)
+        assertEquals(1.5, repository.cached(key, PERIOD).lastClose!!, 0.0)
+
+        val emissions = mutableListOf<Sparkline>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            repository.observeSparkline(key, PERIOD).toList(emissions)
+        }
+        runCurrent()
+        assertEquals(0, adapter.ohlcvCalls)
+        assertEquals(0, adapter.watchCalls)
+        assertEquals(1.5, emissions.first().lastClose!!, 0.0)
+    }
+
     private fun repository(vararg adapters: ExchangeAdapter) =
         RoomSparklineRepository(candleDao, markets, ExchangeRegistry(adapters.toList()))
 
@@ -159,9 +182,9 @@ private class FakeMarketRepository : MarketRepository {
     override suspend fun getMarkets(keys: Collection<MarketKey>): Map<MarketKey, Market> =
         keys.mapNotNull { key -> known[key]?.let { key to it } }.toMap()
 
-    override suspend fun search(query: String, limit: Int, assetClass: AssetClass?): List<Market> = emptyList()
-
-    override suspend fun popularStockRoots(limit: Int): List<String> = emptyList()
+    override suspend fun searchPage(
+            query: String, limit: Int, offset: Int, instrumentKind: InstrumentKind?, exchange: ExchangeId?,
+    ): List<Market> = emptyList()
 }
 
 /** [FakeExchangeAdapter] with a canned OHLCV response and kline stream. */
@@ -172,6 +195,8 @@ private class RecordingAdapter(
 ) : ExchangeAdapter by FakeExchangeAdapter(id) {
 
     var ohlcvCalls: Int = 0
+        private set
+    var watchCalls: Int = 0
         private set
 
     override suspend fun fetchOHLCV(
@@ -184,5 +209,8 @@ private class RecordingAdapter(
         return ohlcv
     }
 
-    override fun watchKlines(market: Market, timeframe: Timeframe): Flow<Candle> = klines
+    override fun watchKlines(market: Market, timeframe: Timeframe): Flow<Candle> {
+        watchCalls++
+        return klines
+    }
 }

@@ -1,1 +1,1 @@
-Crypto watchlist with live prices, charts and home-screen widgets
+Track spot pairs, perpetuals and events with charts and home-screen widgets

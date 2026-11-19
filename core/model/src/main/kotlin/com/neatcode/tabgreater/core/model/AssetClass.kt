@@ -3,7 +3,7 @@ package com.neatcode.tabgreater.core.model
 import kotlinx.serialization.Serializable
 
 /**
- * What a market's base asset is. [id] is the stable string used in persistence.
+ * Exchange API routing for currency and tokenized-asset requests. [id] is the stable string used in persistence.
  *
  * [STOCK] covers tokenized shares ("stock tokens") that crypto exchanges list as ordinary spot
  * markets next to their coins; the exchange adapters classify them from each catalogue.
@@ -18,5 +18,18 @@ enum class AssetClass(val id: String) {
 
         /** Unknown or missing ids read as [CRYPTO], the class of every market stored before stocks. */
         fun fromId(id: String?): AssetClass = id?.let(byId::get) ?: CRYPTO
+    }
+}
+
+/** How a market's price is traded. */
+@Serializable
+enum class InstrumentKind(val id: String, val label: String) {
+    SPOT("spot", "Spot"),
+    PERPETUAL("perpetual", "Perpetual"),
+    OUTCOME("outcome", "Outcome");
+
+    companion object {
+        private val byId = entries.associateBy { it.id }
+        fun fromId(id: String?): InstrumentKind = id?.let(byId::get) ?: SPOT
     }
 }

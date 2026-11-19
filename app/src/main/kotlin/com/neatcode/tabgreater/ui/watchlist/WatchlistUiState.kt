@@ -29,6 +29,11 @@ data class TileUiState(
     val key: MarketKey,
     val exchangeLabel: String,
     val pair: String,
+    val marketContext: String? = null,
+    /** Whether this is an event contract with a selected outcome. */
+    val isEventOutcome: Boolean = false,
+    /** Reserve more identity space beside the chart in the Medium layout. */
+    val twoLineLabel: Boolean = false,
     val priceText: String?,
     val changeText: String?,
     val absChangeText: String?,
@@ -52,6 +57,9 @@ data class TileUiState(
             key == other.key &&
             exchangeLabel == other.exchangeLabel &&
             pair == other.pair &&
+            marketContext == other.marketContext &&
+            isEventOutcome == other.isEventOutcome &&
+            twoLineLabel == other.twoLineLabel &&
             priceText == other.priceText &&
             changeText == other.changeText &&
             absChangeText == other.absChangeText &&
@@ -70,6 +78,9 @@ data class TileUiState(
         result = 31 * result + statusDescription.hashCode()
         result = 31 * result + exchangeLabel.hashCode()
         result = 31 * result + pair.hashCode()
+        result = 31 * result + (marketContext?.hashCode() ?: 0)
+        result = 31 * result + isEventOutcome.hashCode()
+        result = 31 * result + twoLineLabel.hashCode()
         result = 31 * result + (priceText?.hashCode() ?: 0)
         result = 31 * result + (changeText?.hashCode() ?: 0)
         result = 31 * result + (absChangeText?.hashCode() ?: 0)

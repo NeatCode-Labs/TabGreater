@@ -28,6 +28,11 @@ import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -40,10 +45,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.neatcode.tabgreater.R
+import com.neatcode.tabgreater.core.exchange.ExchangeFailureKind
+import com.neatcode.tabgreater.core.live.MarketState
 import com.neatcode.tabgreater.core.model.TGDimens
 import com.neatcode.tabgreater.ui.components.TGBottomSheet
 import com.neatcode.tabgreater.ui.theme.TG
 import com.neatcode.tabgreater.ui.theme.TGType
+import kotlinx.coroutines.delay
 
 /** Every state occupies the same header space; price changes never add a row above the grid. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,6 +110,16 @@ internal fun PriceStatusSheet(
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val hasAges = issues.any { it.lastTradeAtEpochMs != null || it.lastPriceReceivedAtEpochMs != null }
+    var nowEpochMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(hasAges) {
+        if (hasAges) {
+            while (true) {
+                delay(1_000L)
+                nowEpochMs = System.currentTimeMillis()
+            }
+        }
+    }
     val windowHeight = LocalWindowInfo.current.containerSize.height
     val maxDetailsHeight = with(LocalDensity.current) { windowHeight.toDp() * 0.55f }
     TGBottomSheet(
@@ -115,23 +133,38 @@ internal fun PriceStatusSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(stringResource(status.labelRes), style = TGType.sheetItem)
-            Text(stringResource(status.detailRes), style = TGType.sheetItemSupport)
+            status.detailRes?.let { Text(stringResource(it), style = TGType.sheetItemSupport) }
             if (issues.isNotEmpty()) {
                 Text(stringResource(R.string.price_status_affected), style = TGType.sheetItem)
                 issues.forEach { issue ->
                     Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
                         Text(
-                            stringResource(R.string.price_status_pair, issue.key.pair, issue.key.exchange.displayName),
+                            stringResource(
+                                R.string.price_status_pair,
+                                issue.marketLabel?.takeIf(String::isNotBlank) ?: issue.key.pair,
+                                issue.key.exchange.displayName,
+                            ),
                             style = TGType.sheetItem,
                         )
-                        Text(
-                            stringResource(when (issue.kind) {
-                                PriceIssueKind.OLD -> R.string.price_status_issue_old
-                                PriceIssueKind.UNCONFIRMED -> R.string.price_status_issue_unconfirmed
-                                PriceIssueKind.ERROR -> R.string.price_status_issue_error
-                            }),
-                            style = TGType.sheetItemSupport,
-                        )
+                        issue.explanationRes(nowEpochMs)?.let {
+                            Text(stringResource(it), style = TGType.sheetItemSupport)
+                        }
+                        if (issue.lastTradeAtEpochMs != null && issue.lastTradePrice != null) {
+                            Text(
+                                stringResource(
+                                    R.string.price_status_last_trade,
+                                    issue.lastTradePrice,
+                                    formatTradeAge(nowEpochMs, issue.lastTradeAtEpochMs),
+                                ),
+                                style = TGType.sheetItemSupport,
+                            )
+                        }
+                        issue.lastPriceReceivedAtEpochMs?.let {
+                            Text(
+                                stringResource(R.string.price_status_price_received, formatTradeAge(nowEpochMs, it)),
+                                style = TGType.sheetItemSupport,
+                            )
+                        }
                     }
                 }
             }
@@ -150,6 +183,17 @@ internal fun PriceStatusSheet(
     }
 }
 
+/** Human-readable age of the exchange execution timestamp, independent of receive/cache time. */
+internal fun formatTradeAge(nowEpochMs: Long, tradeAtEpochMs: Long): String {
+    val seconds = ((nowEpochMs - tradeAtEpochMs).coerceAtLeast(0L) / 1_000L)
+    return when {
+        seconds < 60L -> "${seconds}s"
+        seconds < 3_600L -> "${seconds / 60L}m ${seconds % 60L}s"
+        seconds < 86_400L -> "${seconds / 3_600L}h ${(seconds % 3_600L) / 60L}m"
+        else -> "${seconds / 86_400L}d ${(seconds % 86_400L) / 3_600L}h"
+    }
+}
+
 private val PriceRefreshStatus.labelRes: Int
     @StringRes get() = when (this) {
         PriceRefreshStatus.EMPTY -> R.string.price_status_empty
@@ -159,11 +203,28 @@ private val PriceRefreshStatus.labelRes: Int
         PriceRefreshStatus.ERROR -> R.string.price_status_error
     }
 
-private val PriceRefreshStatus.detailRes: Int
+@StringRes
+internal fun PriceRefreshIssue.explanationRes(nowEpochMs: Long): Int? = when (kind) {
+    PriceIssueKind.ERROR -> when (failure) {
+        ExchangeFailureKind.RATE_LIMITED -> R.string.price_status_issue_rate_limit
+        ExchangeFailureKind.FORBIDDEN -> R.string.price_status_issue_forbidden
+        ExchangeFailureKind.REGION_RESTRICTED -> R.string.price_status_issue_region
+        ExchangeFailureKind.INVALID_MARKET -> R.string.price_status_issue_market
+        ExchangeFailureKind.INVALID_RESPONSE -> R.string.price_status_issue_response
+        ExchangeFailureKind.DEFERRED -> R.string.price_status_issue_deferred
+        ExchangeFailureKind.TRANSIENT, null -> R.string.price_status_issue_error
+    }
+    PriceIssueKind.UNCONFIRMED -> if (hasDisplayedPrice) R.string.price_status_issue_cached
+        else R.string.price_status_issue_missing
+    PriceIssueKind.OLD -> if (lastTradeAtEpochMs != null && lastTradePrice != null &&
+        lastPriceReceivedAtEpochMs != null && nowEpochMs - lastPriceReceivedAtEpochMs in 0 until MarketState.STALE_AFTER_MS
+    ) null else R.string.price_status_issue_old
+}
+
+private val PriceRefreshStatus.detailRes: Int?
     @StringRes get() = when (this) {
         PriceRefreshStatus.EMPTY -> R.string.price_status_empty_detail
         PriceRefreshStatus.CURRENT -> R.string.price_status_current_detail
         PriceRefreshStatus.REFRESHING -> R.string.price_status_refreshing_detail
-        PriceRefreshStatus.STALE -> R.string.price_status_stale_detail
-        PriceRefreshStatus.ERROR -> R.string.price_status_error_detail
+        PriceRefreshStatus.STALE, PriceRefreshStatus.ERROR -> null
     }

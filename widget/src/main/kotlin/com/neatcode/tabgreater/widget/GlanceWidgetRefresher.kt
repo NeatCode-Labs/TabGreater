@@ -14,6 +14,7 @@ import com.neatcode.tabgreater.core.data.repo.SparklineRepository
 import com.neatcode.tabgreater.core.live.MarketDataRepository
 import com.neatcode.tabgreater.core.live.WidgetRefresher
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.Ticker
 import kotlinx.coroutines.CancellationException
@@ -129,6 +130,10 @@ class GlanceWidgetRefresher internal constructor(
     internal suspend fun precisionFor(key: MarketKey): Int? =
         runCatching { markets.getMarket(key)?.pricePrecision }.getOrNull()
 
+    /** Cached market metadata used to preserve the human-facing name and contract context. */
+    internal suspend fun marketFor(key: MarketKey): Market? =
+        runCatching { markets.getMarket(key) }.getOrNull()
+
     /** Configurations whose widget no longer exists; keeping them keeps the live service resident. */
     private suspend fun dropOrphans(orphans: Set<Int>) {
         if (orphans.isEmpty()) return
@@ -144,7 +149,8 @@ class GlanceWidgetRefresher internal constructor(
     ): Boolean {
         val previous = previousModel(glanceId)
         val ticker = tickers.resolve(config.key)
-        val precision = precisionFor(config.key)
+        val market = marketFor(config.key)
+        val precision = market?.pricePrecision
         // Read regardless of `showSparkline`: the points also back the 24 h change when the
         // ticker carries none (Kraken over REST), and the widget itself decides whether to draw.
         val history = sparklines.cached(config.key, SparkPeriod.HOURS_24)
@@ -153,6 +159,7 @@ class GlanceWidgetRefresher internal constructor(
             config = config,
             ticker = ticker,
             pricePrecision = precision,
+            market = market,
             spark = spark,
             now = System.currentTimeMillis(),
             confirmedAtEpochMs = marketData.currentState(config.key)?.confirmedAtEpochMs,

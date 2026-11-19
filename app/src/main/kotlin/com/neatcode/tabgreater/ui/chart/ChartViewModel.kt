@@ -14,6 +14,7 @@ import com.neatcode.tabgreater.core.live.MarketDataRepository
 import com.neatcode.tabgreater.core.model.Limits
 import com.neatcode.tabgreater.core.model.Market
 import com.neatcode.tabgreater.core.model.MarketKey
+import com.neatcode.tabgreater.ui.displayLabel
 import com.neatcode.tabgreater.core.model.PriceFormat
 import com.neatcode.tabgreater.core.model.SparkPeriod
 import com.neatcode.tabgreater.core.model.Ticker
@@ -271,7 +272,8 @@ class ChartViewModel(
         return ChartUiState(
             key = key,
             market = market,
-            unavailable = lookup.resolved && market == null,
+            pair = market?.displayLabel() ?: key.pair,
+            unavailable = lookup.resolved && market?.active != true,
             priceText = price(ticker?.last),
             changeText = PriceFormat.formatChangePct(change),
             isUp = (change ?: 0.0) >= 0.0,

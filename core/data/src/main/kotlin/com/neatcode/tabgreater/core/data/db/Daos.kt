@@ -121,6 +121,9 @@ interface WatchlistItemDao {
     @Update
     suspend fun update(item: WatchlistItemEntity)
 
+    @Query("UPDATE watchlist_items SET market_key = :marketKey WHERE id = :id AND market_key = :expectedMarketKey")
+    suspend fun replaceMarketKey(id: Long, expectedMarketKey: String, marketKey: String): Int
+
     @Update
     suspend fun updateAll(items: List<WatchlistItemEntity>)
 
@@ -157,80 +160,102 @@ interface MarketDao {
     @Query("SELECT * FROM markets WHERE market_key = :key")
     suspend fun getByKey(key: String): MarketEntity?
 
+    @Query(
+        "SELECT * FROM markets WHERE exchange = :exchange AND rollover_series_id = :seriesId " +
+            "AND LOWER(outcome_side) = :side AND quote = :quote AND active = 1 " +
+            "AND expires_at > :afterEpochMs ORDER BY expires_at ASC",
+    )
+    suspend fun getUpcomingOutcomeSeries(
+        exchange: String,
+        seriesId: String,
+        side: String,
+        quote: String,
+        afterEpochMs: Long,
+    ): List<MarketEntity>
+
     @Query("SELECT COUNT(*) FROM markets WHERE exchange = :exchange")
     suspend fun count(exchange: String): Int
 
     @Query("SELECT MAX(updated_at) FROM markets WHERE exchange = :exchange")
     suspend fun lastUpdated(exchange: String): Long?
 
-    /**
-     * Prefix search over base, quote and `BASE/QUOTE`. Like every search query here it takes an
-     * [assetClass] id (`null` = every class) and filters on it before the `LIMIT`, so a page of
-     * stock tokens can never crowd the coins out of a crypto search, or the reverse.
-     */
-    @Query(
-        """
-        SELECT * FROM markets
-        WHERE active = 1 AND (base LIKE :prefix || '%' OR quote LIKE :prefix || '%' OR (base || '/' || quote) LIKE :pattern)
-        AND (:assetClass IS NULL OR asset_class = :assetClass)
-        ORDER BY exchange, base, quote
-        LIMIT :limit
-        """,
-    )
-    suspend fun search(prefix: String, pattern: String, assetClass: String?, limit: Int): List<MarketEntity>
-
-    /**
-     * `BASE/QUOTE` search. The `/` pins the base: `("ETH", "USD")` matches `ETH/USD`, `ETH/USDT`,
-     * `ETH/USDC` but never `ETHFI/USD`; the quote stays a prefix. An empty [base] (`"/EUR"`) means
-     * any base. In the stock class the base may also name the underlying share, so `TSLA/USDT`
-     * finds `TSLAX/USDT` and `TSLAB/USDT`; every other class is untouched by that term.
-     */
+    /** Search symbols and market/event metadata while applying filters before pagination. */
     @Query(
         """
         SELECT * FROM markets
         WHERE active = 1
-        AND (:base = '' OR base = :base OR (:assetClass = 'stock' AND underlying = :base))
-        AND quote LIKE :quotePrefix || '%'
-        AND (:assetClass IS NULL OR asset_class = :assetClass)
-        ORDER BY exchange, base, quote
-        LIMIT :limit
+          AND exchange IN (:exchanges)
+          AND (:instrumentKind IS NULL OR instrument_kind = :instrumentKind)
+          AND (:exchange IS NULL OR exchange = :exchange)
+          AND (
+            :searchText = ''
+            OR (
+              :pairSearch = 1 AND (
+                instr(upper(display_name), :pairDisplayPrefix) = 1
+                OR (
+                  (:exactBase = '' OR base = :exactBase OR underlying = :exactBase OR upper(native_symbol) = :exactBase)
+                  AND instr(quote, :quotePrefix) = 1
+                )
+              )
+            )
+            OR (
+              :hasSlash = 0 AND :compactPrefix != ''
+              AND (base LIKE :compactPrefix || '%' OR quote LIKE :compactPrefix || '%'
+                OR underlying LIKE :compactPrefix || '%' OR (base || quote) LIKE :compactQuery || '%')
+            )
+            OR (
+              :pairSearch = 0 AND (
+                instr(upper(display_name), upper(:searchText)) > 0
+                OR instr(upper(description), upper(:searchText)) > 0
+                OR instr(upper(native_symbol), upper(:searchText)) > 0
+                OR instr(upper(venue), upper(:searchText)) > 0
+                OR instr(upper(unit), upper(:searchText)) > 0
+                OR instr(upper(underlying), upper(:searchText)) > 0
+                OR instr(upper(outcome_side), upper(:searchText)) > 0
+                OR instr(upper(event_id), upper(:searchText)) > 0
+                OR instr(upper(outcome_id), upper(:searchText)) > 0
+              )
+            )
+          )
+        ORDER BY CASE
+                   WHEN underlying = :compactPrefix THEN 0
+                   WHEN base = :compactPrefix THEN 1
+                   ELSE 2
+                 END,
+                 exchange, base, quote, market_key
+        LIMIT :limit OFFSET :offset
         """,
     )
-    suspend fun searchPair(base: String, quotePrefix: String, assetClass: String?, limit: Int): List<MarketEntity>
-
-    /**
-     * Candidates for the concatenated form (`"BTCEUR"`): every market whose base is a prefix of
-     * the query. The caller then keeps the rows where `base || quote` starts with the query.
-     */
-    @Query(
-        """
-        SELECT * FROM markets
-        WHERE active = 1 AND :query LIKE base || '%'
-        AND (:assetClass IS NULL OR asset_class = :assetClass)
-        ORDER BY exchange, base, quote
-        LIMIT :limit
-        """,
-    )
-    suspend fun searchConcatCandidates(query: String, assetClass: String?, limit: Int): List<MarketEntity>
-
-    /**
-     * Distinct underlyings of the active [assetClass] markets on [exchanges], the most widely
-     * listed first: by the number of exchanges that list one, then by its number of markets, then
-     * alphabetically.
-     */
-    @Query(
-        """
-        SELECT underlying FROM markets
-        WHERE active = 1 AND asset_class = :assetClass AND underlying IS NOT NULL AND exchange IN (:exchanges)
-        GROUP BY underlying
-        ORDER BY COUNT(DISTINCT exchange) DESC, COUNT(*) DESC, underlying
-        LIMIT :limit
-        """,
-    )
-    suspend fun popularUnderlyings(assetClass: String, exchanges: List<String>, limit: Int): List<String>
+    suspend fun searchCatalog(
+        searchText: String,
+        pairSearch: Boolean,
+        pairDisplayPrefix: String,
+        compactPrefix: String,
+        compactQuery: String,
+        hasSlash: Boolean,
+        exactBase: String,
+        quotePrefix: String,
+        instrumentKind: String?,
+        exchange: String?,
+        exchanges: List<String>,
+        limit: Int,
+        offset: Int,
+    ): List<MarketEntity>
 
     @Upsert
     suspend fun upsertAll(markets: List<MarketEntity>)
+
+    /**
+     * Retain labels for watchlists. Only a complete catalogue can withdraw missing markets.
+     */
+    @Transaction
+    suspend fun syncCatalogue(exchange: String, markets: List<MarketEntity>, refreshedAt: Long, archiveMissing: Boolean) {
+        upsertAll(markets)
+        if (archiveMissing) deactivateStale(exchange, refreshedAt)
+    }
+
+    @Query("UPDATE markets SET active = 0 WHERE exchange = :exchange AND updated_at < :refreshedAt")
+    suspend fun deactivateStale(exchange: String, refreshedAt: Long)
 
     @Query("DELETE FROM markets WHERE exchange = :exchange AND market_key NOT IN (:keepKeys)")
     suspend fun deleteMissing(exchange: String, keepKeys: List<String>)
