@@ -1,0 +1,4 @@
+Fix logarithmic price charts.
+• Prices below 1 now display correctly on the axis, last-price label and crosshair.
+• Narrow price ranges stay readable on high-priced markets.
+• New drawing anchors keep the price you select on a logarithmic chart.

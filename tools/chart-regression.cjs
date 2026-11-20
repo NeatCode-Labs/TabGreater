@@ -13,6 +13,47 @@ const bars = (price) => [0, 1, 2].map(i => ({
   timestamp: 1791273600000 + i * 3600000,
   open: price, high: price + 1, low: price - 1, close: price, volume: 100,
 }));
+const bandBars = (low, high, open, close) => [0, 1, 2].map(i => ({
+  timestamp: 1791273600000 + i * 3600000,
+  open, high, low, close, volume: 100,
+}));
+const variedBars = (closes) => closes.map((close, i) => ({
+  timestamp: 1791273600000 + i * 3600000,
+  open: close, high: close * 1.1, low: close * 0.9, close, volume: 100,
+}));
+const tightHighBars = (closes) => closes.map((close, i) => ({
+  timestamp: 1791273600000 + i * 3600000,
+  open: close, high: close + 0.01, low: close - 0.01, close, volume: 100,
+}));
+
+async function paint(page) {
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function loadBars(f, symbol, series) {
+  const request = await f.swap(symbol);
+  await f.reply(request, { bars: series, hasMoreOlder: false });
+  await f.page.waitForFunction(() => testChart && testChart.getDataList().length > 0);
+  await paint(f.page);
+  assert.equal((await f.data()).length, series.length);
+}
+
+function near(actual, expected, tolerance, message) {
+  assert.ok(Number.isFinite(actual), `${message}: expected a finite value, got ${actual}`);
+  assert.ok(Math.abs(actual - expected) <= tolerance,
+    `${message}: expected ${expected} ± ${tolerance}, got ${actual}`);
+}
+
+function expectLinearMapping(snapshot, label) {
+  const { from, to } = snapshot.range;
+  assert.ok(Number.isFinite(from) && Number.isFinite(to) && to > from,
+    `${label}: y-axis range must be finite and increasing`);
+  const middle = (from + to) / 2;
+  near(snapshot.pixels[1], (snapshot.pixels[0] + snapshot.pixels[2]) / 2, 2,
+    `${label}: midpoint must map linearly`);
+  near(snapshot.middleValue, middle, Math.max(Math.abs(middle) * 0.01, 0.01),
+    `${label}: pixel-to-value conversion must use the same linear scale`);
+}
 
 async function fixture(browser) {
   const context = await browser.newContext({ viewport: { width: 400, height: 700 } });
@@ -140,6 +181,223 @@ const tests = [
     assert.equal(await f.page.evaluate(() => testChart.getOverlays().length), 1);
     await f.page.evaluate(bar => tg.onBar(bar), bars(85546).at(-1));
     assert.equal((await f.data()).at(-1).close, 85546);
+  }],
+  ['log scale round-trips positive sub-unit prices and labels them positively', async f => {
+    await loadBars(f, A, bandBars(0.01, 0.1, 0.025, 0.075));
+    await f.page.evaluate(() => tg.setScale('log'));
+    await paint(f.page);
+    const result = await f.page.evaluate(values => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      return {
+        range: axis.getRange(),
+        height: axis.getBounding().height,
+        ticks: axis.getTicks().map(tick => ({ text: tick.text, value: Number(tick.value) })),
+        points: values.map(value => ({
+          value,
+          pixel: axis.convertToPixel(value),
+          roundTrip: axis.convertFromPixel(axis.convertToPixel(value)),
+        })),
+      };
+    }, [0.01, Math.sqrt(0.01 * 0.1), 0.1]);
+    assert.ok(result.ticks.length > 0, 'the logarithmic axis should have ticks');
+    assert.ok(result.ticks.every(tick => Number.isFinite(tick.value) && tick.value > 0),
+      `sub-unit positive prices must not acquire zero/negative labels: ${JSON.stringify(result.ticks)}`);
+    for (const point of result.points) {
+      near(point.roundTrip, point.value, point.value * 0.03, `log round-trip at ${point.value}`);
+    }
+    near(result.points[1].pixel, (result.points[0].pixel + result.points[2].pixel) / 2, 2,
+      'geometric midpoint below one must be halfway on the log axis');
+  }],
+  ['log scale stays logarithmic across one', async f => {
+    await loadBars(f, A, bandBars(0.1, 10, 0.25, 8));
+    await f.page.evaluate(() => tg.setScale('log'));
+    await paint(f.page);
+    const result = await f.page.evaluate(values => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      return {
+        ticks: axis.getTicks().map(tick => ({ text: tick.text, value: Number(tick.value) })),
+        points: values.map(value => ({
+          value,
+          pixel: axis.convertToPixel(value),
+          roundTrip: axis.convertFromPixel(axis.convertToPixel(value)),
+        })),
+      };
+    }, [0.1, 1, 10]);
+    assert.ok(result.ticks.length > 0);
+    assert.ok(result.ticks.every(tick => Number.isFinite(tick.value) && tick.value > 0),
+      `positive range crossing one must keep positive ticks: ${JSON.stringify(result.ticks)}`);
+    for (const point of result.points) {
+      near(point.roundTrip, point.value, point.value * 0.03, `cross-one round-trip at ${point.value}`);
+    }
+    near(result.points[1].pixel, (result.points[0].pixel + result.points[2].pixel) / 2, 2,
+      'one must be halfway between 0.1 and 10 on the log axis');
+  }],
+  ['flat and tight high-priced bars retain a visible price range on log scale', async f => {
+    await loadBars(f, A, bandBars(99999.99, 100000.01, 100000, 100000));
+    await f.page.evaluate(() => tg.setScale('log'));
+    await paint(f.page);
+    const flat = await f.page.evaluate(() => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      return {
+        height: axis.getBounding().height,
+        low: axis.convertToPixel(99999.99),
+        high: axis.convertToPixel(100000.01),
+        ticks: axis.getTicks().length,
+      };
+    });
+    assert.ok(flat.ticks > 0, 'flat data still needs a usable price axis');
+    assert.ok(flat.low > 0 && flat.low < flat.height && flat.high > 0 && flat.high < flat.height,
+      `flat high-priced data must remain inside the plot: ${JSON.stringify(flat)}`);
+    assert.ok(Math.abs(flat.high - flat.low) >= 10,
+      `the 0.02 price band should not collapse to a sub-pixel at 100,000: ${JSON.stringify(flat)}`);
+
+    await loadBars(f, B, tightHighBars([99999.99, 100000, 100000.01]));
+    await paint(f.page);
+    const tight = await f.page.evaluate(() => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      return {
+        height: axis.getBounding().height,
+        low: axis.convertToPixel(99999.98),
+        high: axis.convertToPixel(100000.02),
+        ticks: axis.getTicks().length,
+      };
+    });
+    assert.ok(tight.ticks > 0);
+    assert.ok(tight.low > 0 && tight.low < tight.height && tight.high > 0 && tight.high < tight.height,
+      `a tight non-flat high-price range must remain inside the plot: ${JSON.stringify(tight)}`);
+    assert.ok(Math.abs(tight.high - tight.low) >= 10,
+      `a 0.04 price band around 100,000 should remain visible: ${JSON.stringify(tight)}`);
+  }],
+  ['log scale falls back to linear for candle ranges containing zero', async f => {
+    await loadBars(f, A, bandBars(0, 2, 0.5, 1.5));
+    await f.page.evaluate(() => tg.setScale('log'));
+    await paint(f.page);
+    const zeroRange = await f.page.evaluate(() => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      const range = axis.getRange();
+      const middle = (range.from + range.to) / 2;
+      return {
+        range,
+        pixels: [range.from, middle, range.to].map(value => axis.convertToPixel(value)),
+        middleValue: axis.convertFromPixel(axis.convertToPixel(middle)),
+      };
+    });
+    expectLinearMapping(zeroRange, 'zero-containing candle range');
+
+    // The chart keeps the selected log mode across a market swap; a negative candle range must
+    // take the same safe linear path rather than creating invalid logarithms.
+    await loadBars(f, B, bandBars(-2, -1, -1.75, -1.25));
+    await paint(f.page);
+    const negativeRange = await f.page.evaluate(() => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      const range = axis.getRange();
+      const middle = (range.from + range.to) / 2;
+      return {
+        range,
+        pixels: [range.from, middle, range.to].map(value => axis.convertToPixel(value)),
+        middleValue: axis.convertFromPixel(axis.convertToPixel(middle)),
+      };
+    });
+    expectLinearMapping(negativeRange, 'negative candle range after market switch');
+  }],
+  ['a nonpositive main-pane indicator range uses linear mapping', async f => {
+    await loadBars(f, A, variedBars([0.1, 1, 0.1, 1, 0.1]));
+    await f.page.evaluate(() => {
+      tg.setIndicators([{ name: 'BOLL', calcParams: [2, 2], pane: 'main' }]);
+      tg.setScale('log');
+    });
+    await f.page.waitForFunction(() => {
+      const indicator = testChart.getIndicators({ id: 'tg_BOLL' })[0];
+      return indicator && indicator.result.some(row => Object.values(row).some(value => Number.isFinite(value) && value <= 0));
+    }, undefined, { timeout: 3000 });
+    await paint(f.page);
+    const snapshot = await f.page.evaluate(() => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      const range = axis.getRange();
+      const middle = (range.from + range.to) / 2;
+      const indicator = testChart.getIndicators({ id: 'tg_BOLL' })[0];
+      return {
+        range,
+        indicatorMinimum: Math.min(...indicator.result.flatMap(row => Object.values(row).filter(Number.isFinite))),
+        pixels: [range.from, middle, range.to].map(value => axis.convertToPixel(value)),
+        middleValue: axis.convertFromPixel(axis.convertToPixel(middle)),
+      };
+    });
+    assert.ok(snapshot.indicatorMinimum <= 0,
+      `fixture must produce a nonpositive BOLL extreme: ${snapshot.indicatorMinimum}`);
+    assert.ok(snapshot.range.from <= 0,
+      `main-pane indicator extrema must enter the axis range: ${JSON.stringify(snapshot.range)}`);
+    expectLinearMapping(snapshot, 'nonpositive main-pane indicator range');
+  }],
+  ['manual y-axis zoom that would cross zero retains the last positive range', async f => {
+    await loadBars(f, A, bandBars(0.01, 0.1, 0.025, 0.075));
+    await f.page.evaluate(() => tg.setScale('log'));
+    await paint(f.page);
+    const chartBox = await f.page.locator('#chart').boundingBox();
+    const before = await f.page.evaluate(() => {
+      const bounds = testChart.getYAxes({ paneId: 'candle_pane' })[0].getBounding();
+      return {
+        bounds: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height },
+        range: testChart.getYAxes({ paneId: 'candle_pane' })[0].getRange(),
+      };
+    });
+    const top = chartBox.y + before.bounds.top;
+    const x = chartBox.x + before.bounds.left + before.bounds.width / 2;
+    const startY = top + before.bounds.height * 0.2;
+    const endY = top + before.bounds.height * 0.8;
+    const scaleFactor = endY / startY;
+    const wouldBeFrom = before.range.from - (before.range.to - before.range.from) * (scaleFactor - 1) / 2;
+    assert.ok(before.range.from > 0 && wouldBeFrom <= 0,
+      `the manual drag must attempt to cross zero: before=${JSON.stringify(before.range)}, attemptedFrom=${wouldBeFrom}`);
+    await f.page.mouse.move(x, startY);
+    await f.page.mouse.down();
+    await f.page.mouse.move(x, endY, { steps: 12 });
+    await f.page.mouse.up();
+    await paint(f.page);
+    const after = await f.page.evaluate(() => {
+      const axis = testChart.getYAxes({ paneId: 'candle_pane' })[0];
+      return axis.getRange();
+    });
+    assert.ok(Number.isFinite(after.from) && Number.isFinite(after.to) && after.from > 0 && after.to > 0,
+      `a rejected zoom must leave a drawable positive range: ${JSON.stringify(after)}`);
+    near(after.from, before.range.from, Math.max(Math.abs(before.range.from) * 1e-6, 1e-9),
+      'rejected manual zoom keeps the previous lower bound');
+    near(after.to, before.range.to, Math.max(Math.abs(before.range.to) * 1e-6, 1e-9),
+      'rejected manual zoom keeps the previous upper bound');
+  }],
+  ['sub-unit drawings save positive prices and survive log/linear switching', async f => {
+    const series = bandBars(0.01, 0.1, 0.025, 0.075);
+    await loadBars(f, A, series);
+    await f.page.evaluate(symbol => tg.setDrawings({ ...symbol, drawings: [] }), A);
+    await paint(f.page);
+    await f.page.evaluate(() => {
+      tg.setMagnet('none');
+      tg.setScale('log');
+      tg.startDrawing('horizontalStraightLine');
+    });
+    await paint(f.page);
+    const point = await f.page.evaluate(value =>
+      testChart.convertToPixel(value, { paneId: 'candle_pane', absolute: true }),
+    { timestamp: series[1].timestamp, value: 0.05 });
+    const chartBox = await f.page.locator('#chart').boundingBox();
+    await f.page.mouse.move(chartBox.x + point.x, chartBox.y + point.y);
+    await f.page.mouse.click(chartBox.x + point.x, chartBox.y + point.y);
+    await f.page.waitForFunction(() => requests.some(r => r.action === 'drawingsChanged'), undefined, { timeout: 3000 });
+    const payload = (await f.requests('drawingsChanged')).at(-1).payload;
+    assert.equal(payload.drawings.length, 1);
+    assert.equal(payload.drawings[0].points.length, 1);
+    near(payload.drawings[0].points[0].value, 0.05, 0.05 * 0.05, 'persisted drawing price');
+
+    for (const mode of ['normal', 'log']) {
+      await f.page.evaluate(mode => tg.setScale(mode), mode);
+      await paint(f.page);
+      const restoredPoints = await f.page.evaluate(() => testChart.getOverlays()
+        .filter(overlay => overlay.groupId === 'tg')
+        .flatMap(overlay => overlay.points.map(point => point.value)));
+      assert.equal(restoredPoints.length, 1);
+      assert.ok(restoredPoints.every(value => Number.isFinite(value) && value > 0),
+        `drawing anchors must remain positive after switching to ${mode}: ${JSON.stringify(restoredPoints)}`);
+    }
   }],
 ];
 

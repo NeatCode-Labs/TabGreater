@@ -1316,7 +1316,10 @@
 
     setScale: function (mode) {                       // 'log' | 'normal'
       if (chart === null) { return; }
-      chart.overrideYAxis({ paneId: CANDLE_PANE, name: (mode === 'log') ? 'logarithm' : 'normal' });
+      chart.overrideYAxis({ paneId: CANDLE_PANE, name: (mode === 'log') ? 'tg_price_log' : 'normal' });
+      if (mode === 'log') {
+        chart.getYAxes({ paneId: CANDLE_PANE }).forEach(guardManualLogRange);
+      }
     },
 
     // The "auto" button: undo a manual y-axis drag, re-enable autoscale.
@@ -1367,6 +1370,60 @@
     setDrawingText:        drawingApi.setDrawingText,
     removeDrawing:         drawingApi.removeDrawing
   };
+
+  // Gestures in KLineChart 10.0.3 propose manual bounds in price units. Ignore a drag or
+  // zoom that would cross zero on a positive log axis, retaining the last drawable range.
+  function guardManualLogRange(axis) {
+    if (axis.name !== 'tg_price_log' || axis.manualLogRangeGuarded) { return; }
+    var setRange = axis.setRange;
+    axis.setRange = function (range) {
+      if (!Number.isFinite(range.realFrom) || !Number.isFinite(range.realTo) ||
+          !(range.realTo > range.realFrom)) { return; }
+      // The engine adds tick intervals to a price in a loop. At extreme manual zoom an
+      // interval smaller than one representable increment would never advance that loop.
+      if (range.to - range.from <= 32 * Number.EPSILON * Math.max(Math.abs(range.from), Math.abs(range.to))) { return; }
+      setRange.call(this, range);
+    };
+    axis.manualLogRangeGuarded = true;
+  }
+
+  function priceToAxis(value) {
+    return this.linearPriceRange ? value : Math.log10(value);
+  }
+
+  function axisToPrice(value) {
+    return this.linearPriceRange ? value : Math.pow(10, value);
+  }
+
+  // Only coordinates are logarithmic. Ticks, crosshairs and drawing anchors use prices.
+  K.registerYAxis({
+    name: 'tg_price_log',
+    valueToRealValue: priceToAxis,
+    displayValueToRealValue: priceToAxis,
+    realValueToValue: axisToPrice,
+    realValueToDisplayValue: axisToPrice,
+    createRange: function (params) {
+      var range = params.defaultRange;
+      // Zero and negative candle/indicator values cannot be drawn on a true logarithmic axis.
+      this.linearPriceRange = range.from <= 0;
+      if (this.linearPriceRange) { return range; }
+      var low = Math.log10(range.from), high = Math.log10(range.to);
+      var resolution = 32 * Number.EPSILON * Math.max(1, Math.abs(low), Math.abs(high));
+      if (high - low < resolution) {
+        var symbol = params.chart.getSymbol();
+        var tick = Math.pow(10, -(symbol ? symbol.pricePrecision : 4));
+        var pad = Math.max(resolution, Math.log1p(Math.min(1, tick / range.to)) / Math.LN10);
+        low -= pad;
+        high += pad;
+      }
+      return Object.assign({}, range, { realFrom: low, realTo: high, realRange: high - low });
+    },
+    minSpan: function (precision) {
+      // Positive ranges are already padded above when flat. An absolute price tick cannot
+      // be used as a logarithmic distance: it flattens even ordinary high-priced candles.
+      return this.linearPriceRange ? Math.pow(10, -precision) : 0;
+    }
+  });
 
   // register the alias y-axis used by the resetAutoScale fallback
   K.registerYAxis({ name: 'tg_normal_alt' });
