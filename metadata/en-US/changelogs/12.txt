@@ -1,0 +1,3 @@
+Swipe between watchlists.
+• Swipe left or right across the tiles to open the watchlist beside the current one. This works on empty lists too.
+• You can also tap a watchlist name to jump straight to it.

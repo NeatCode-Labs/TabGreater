@@ -46,7 +46,7 @@ import org.koin.androidx.compose.koinViewModel
  * The Watchlists screen: app bar, watchlist tabs, filter chips and the tile grid with the
  * "+ Ticker" pill floating over it.
  *
- * Three gestures share the grid: a tap opens the chart, a long press ticks the tile for a bulk
+ * A horizontal swipe switches watchlists. A tap opens the chart, a long press ticks the tile for a bulk
  * action, and a long press followed by movement drags the tile to a new place (see
  * [rememberReorderState]). While tiles are ticked the app bar becomes a [SelectionActionBar].
  *
@@ -126,82 +126,93 @@ fun WatchlistScreen(
                     },
                 ),
         ) {
-            if (state.tiles.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.watchlist_empty),
-                    style = TGType.chip,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            } else {
-                BoxWithConstraints(Modifier.fillMaxSize()) {
-                    val density = LocalDensity.current
-                    val gridWidthPx = with(density) { maxWidth.roundToPx() }
-                    val gridMarginPx = with(density) { TGDimens.GRID_MARGIN_DP.dp.roundToPx() }
-                    val gridGapPx = with(density) { TGDimens.GRID_GAP_DP.dp.roundToPx() }
-                    val gridColumnsWidthPx = (gridWidthPx - 2 * gridMarginPx - gridGapPx).coerceAtLeast(0)
-                    val firstSmallColumnIsOnePixelWider =
-                        state.tileSize == TileSize.SMALL && gridColumnsWidthPx % 2 != 0
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .watchlistSwipe(
+                        watchlists = state.watchlists,
+                        selectedId = state.selectedId,
+                        enabled = !state.isSelecting,
+                        onSelect = viewModel::selectWatchlist,
+                    ),
+            ) {
+                if (state.tiles.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.watchlist_empty),
+                        style = TGType.chip,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                } else {
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                        val density = LocalDensity.current
+                        val gridWidthPx = with(density) { maxWidth.roundToPx() }
+                        val gridMarginPx = with(density) { TGDimens.GRID_MARGIN_DP.dp.roundToPx() }
+                        val gridGapPx = with(density) { TGDimens.GRID_GAP_DP.dp.roundToPx() }
+                        val gridColumnsWidthPx = (gridWidthPx - 2 * gridMarginPx - gridGapPx).coerceAtLeast(0)
+                        val firstSmallColumnIsOnePixelWider =
+                            state.tileSize == TileSize.SMALL && gridColumnsWidthPx % 2 != 0
 
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(state.tileSize.columns),
-                        modifier = Modifier.fillMaxSize(),
-                        state = gridState,
-                        contentPadding = PaddingValues(
-                            start = TGDimens.GRID_MARGIN_DP.dp,
-                            end = TGDimens.GRID_MARGIN_DP.dp,
-                            // The chip row's own 8 dp bottom pad is the gap to the first tile row.
-                            top = 0.dp,
-                            // Tiles scroll under the FAB, but the last row can still scroll clear of it.
-                            bottom = (TGDimens.GRID_GAP_DP + TGDimens.FAB_H_DP + 16).dp,
-                        ),
-                        horizontalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
-                        verticalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
-                    ) {
-                        itemsIndexed(state.tiles, key = { _, tile -> tile.itemId }) { index, tile ->
-                            val dragging = tile.itemId == reorder.draggingItemId
-                            val itemModifier = Modifier
-                                .fillMaxWidth()
-                                // The tile under the finger must not also animate to its new slot.
-                                .then(if (dragging) Modifier else Modifier.animateItem())
-                            val peer = if (state.tileSize == TileSize.SMALL) {
-                                state.tiles.getOrNull(if (index % 2 == 0) index + 1 else index - 1)
-                            } else {
-                                null
-                            }
-                            if (peer != null) {
-                                SmallTileCell(
-                                    tile = tile,
-                                    peer = peer,
-                                    selectedIds = state.selectedIds,
-                                    isSelecting = state.isSelecting,
-                                    shrinkZeros = state.shrinkZeros,
-                                    reorder = reorder,
-                                    peerWidthAdjustmentPx = if (firstSmallColumnIsOnePixelWider) {
-                                        if (index % 2 == 0) -1 else 1
-                                    } else {
-                                        0
-                                    },
-                                    modifier = itemModifier,
-                                    onOpenChart = onOpenChart,
-                                    onToggleSelection = viewModel::toggleSelection,
-                                )
-                            } else {
-                                TickerTile(
-                                    tile = tile,
-                                    size = state.tileSize,
-                                    modifier = itemModifier
-                                        .reorderable(reorder, tile.itemId, enabled = !state.isSelecting)
-                                        .clickable {
-                                            when {
-                                                // The release that ends a long press is not a tap.
-                                                reorder.consumeLongPress() -> Unit
-                                                state.isSelecting -> viewModel.toggleSelection(tile.itemId)
-                                                else -> onOpenChart(tile.key)
-                                            }
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(state.tileSize.columns),
+                            modifier = Modifier.fillMaxSize(),
+                            state = gridState,
+                            contentPadding = PaddingValues(
+                                start = TGDimens.GRID_MARGIN_DP.dp,
+                                end = TGDimens.GRID_MARGIN_DP.dp,
+                                // The chip row's own 8 dp bottom pad is the gap to the first tile row.
+                                top = 0.dp,
+                                // Tiles scroll under the FAB, but the last row can still scroll clear of it.
+                                bottom = (TGDimens.GRID_GAP_DP + TGDimens.FAB_H_DP + 16).dp,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
+                            verticalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
+                        ) {
+                            itemsIndexed(state.tiles, key = { _, tile -> tile.itemId }) { index, tile ->
+                                val dragging = tile.itemId == reorder.draggingItemId
+                                val itemModifier = Modifier
+                                    .fillMaxWidth()
+                                    // The tile under the finger must not also animate to its new slot.
+                                    .then(if (dragging) Modifier else Modifier.animateItem())
+                                val peer = if (state.tileSize == TileSize.SMALL) {
+                                    state.tiles.getOrNull(if (index % 2 == 0) index + 1 else index - 1)
+                                } else {
+                                    null
+                                }
+                                if (peer != null) {
+                                    SmallTileCell(
+                                        tile = tile,
+                                        peer = peer,
+                                        selectedIds = state.selectedIds,
+                                        isSelecting = state.isSelecting,
+                                        shrinkZeros = state.shrinkZeros,
+                                        reorder = reorder,
+                                        peerWidthAdjustmentPx = if (firstSmallColumnIsOnePixelWider) {
+                                            if (index % 2 == 0) -1 else 1
+                                        } else {
+                                            0
                                         },
-                                    selected = tile.itemId in state.selectedIds,
-                                    shrinkZeros = state.shrinkZeros,
-                                )
+                                        modifier = itemModifier,
+                                        onOpenChart = onOpenChart,
+                                        onToggleSelection = viewModel::toggleSelection,
+                                    )
+                                } else {
+                                    TickerTile(
+                                        tile = tile,
+                                        size = state.tileSize,
+                                        modifier = itemModifier
+                                            .reorderable(reorder, tile.itemId, enabled = !state.isSelecting)
+                                            .clickable {
+                                                when {
+                                                    // The release that ends a long press is not a tap.
+                                                    reorder.consumeLongPress() -> Unit
+                                                    state.isSelecting -> viewModel.toggleSelection(tile.itemId)
+                                                    else -> onOpenChart(tile.key)
+                                                }
+                                            },
+                                        selected = tile.itemId in state.selectedIds,
+                                        shrinkZeros = state.shrinkZeros,
+                                    )
+                                }
                             }
                         }
                     }

@@ -1,7 +1,6 @@
 package com.neatcode.tabgreater.ui.watchlist
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,16 +12,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -53,13 +58,26 @@ fun WatchlistTabs(
     onManage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scrollState = rememberScrollState()
+    val selectedTabRequester = remember { BringIntoViewRequester() }
+    val watchlistIds = remember(watchlists) { watchlists.map { it.id } }
+
+    LaunchedEffect(selectedId, watchlistIds) {
+        if (selectedId != null && selectedId in watchlistIds) {
+            selectedTabRequester.bringIntoView()
+        }
+    }
+
     Column(modifier.fillMaxWidth().background(TG.Background)) {
         Box(Modifier.fillMaxWidth().height(TGDimens.TAB_ROW_DP.dp - 1.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(start = TAB_START_DP.dp, end = TAB_END_RESERVE_DP.dp),
+                    // Keep the scroll viewport to the left of the pinned Manager button so a
+                    // selected tab brought into view cannot hide beneath the button.
+                    .padding(end = TAB_END_RESERVE_DP.dp)
+                    .horizontalScroll(scrollState)
+                    .padding(start = TAB_START_DP.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
                 watchlists.forEachIndexed { index, watchlist ->
@@ -68,11 +86,16 @@ fun WatchlistTabs(
                         name = watchlist.name,
                         active = watchlist.id == selectedId,
                         onClick = { onSelect(watchlist.id) },
+                        modifier = if (watchlist.id == selectedId) {
+                            Modifier.bringIntoViewRequester(selectedTabRequester)
+                        } else {
+                            Modifier
+                        },
                     )
                 }
             }
 
-            // Opaque so the labels scroll underneath it instead of colliding with it.
+            // The Manager stays pinned while the tab labels scroll.
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -97,14 +120,15 @@ private fun WatchlistTab(
     name: String,
     active: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
         // IntrinsicSize.Max pins the column to the label's own width, which the indicator then
         // fills — that is what makes the indicator match the text and not the tab.
-        modifier = Modifier
+        modifier = modifier
             .fillMaxHeight()
             .width(IntrinsicSize.Max)
-            .clickable(onClick = onClick),
+            .selectable(selected = active, role = Role.Tab, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.weight(1f))

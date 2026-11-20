@@ -37,7 +37,8 @@ exchanges directly: there is no backend, no account and nothing is collected.
 
 ## Highlights
 
-- **Watchlists** — several named lists, four tile sizes: two per row (Small,
+- **Watchlists** — swipe left or right across the tiles to switch lists, or tap
+  a list name. Choose from four tile sizes: two per row (Small,
   Compact) or full width (Medium, Large). Sparkline period 1 h / 24 h / 7 d /
   30 d, five sort orders (Custom, Exchange + Pair, Pair + Exchange, Price,
   Change); drag to reorder, long-press for colour stripes, move and delete;
