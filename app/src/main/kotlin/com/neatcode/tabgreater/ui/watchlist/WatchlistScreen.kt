@@ -24,7 +24,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -64,14 +63,14 @@ fun WatchlistScreen(
     var openSheet by rememberSaveable { mutableStateOf(WatchlistSheet.NONE) }
     var showManager by rememberSaveable { mutableStateOf(false) }
     var showPriceStatus by rememberSaveable { mutableStateOf(false) }
-    val watchlistIds = remember(state.watchlists) { state.watchlists.map { it.id } }
+    // Pager can ask for keys while an import or deletion is changing the number of pages.
+    val currentWatchlists by rememberUpdatedState(state.watchlists)
+    val watchlistIds = remember(currentWatchlists) { currentWatchlists.map { it.id } }
     val selectedPage = state.selectedId?.let(watchlistIds::indexOf)?.coerceAtLeast(0) ?: 0
-    val pagerState = rememberPagerState(initialPage = selectedPage) { watchlistIds.size }
+    val pagerState = rememberPagerState(initialPage = selectedPage) { currentWatchlists.size }
     val scope = rememberCoroutineScope()
-    val motionScaleFactor = scope.coroutineContext[MotionDurationScale]?.scaleFactor ?: 1f
     var pagerAligned by remember(pagerState) { mutableStateOf(false) }
     var reorderingWatchlistId by remember { mutableStateOf<Long?>(null) }
-    val currentWatchlistIds by rememberUpdatedState(watchlistIds)
     val committedWatchlistId by rememberUpdatedState(state.selectedId)
     val visualSelectedId = watchlistIds.getOrNull(pagerState.currentPage) ?: state.selectedId
     val navigateToWatchlist: (Long) -> Unit = { id ->
@@ -97,7 +96,7 @@ fun WatchlistScreen(
             .distinctUntilChanged()
             .collect { (page, aligned) ->
                 if (!aligned) return@collect
-                val id = currentWatchlistIds.getOrNull(page) ?: return@collect
+                val id = currentWatchlists.getOrNull(page)?.id ?: return@collect
                 if (id != committedWatchlistId) viewModel.selectWatchlist(id)
             }
     }
@@ -166,7 +165,6 @@ fun WatchlistScreen(
                     val flingBehavior = rememberWatchlistPagerFlingBehavior(
                         state = pagerState,
                         pageWidth = maxWidth,
-                        motionScaleFactor = motionScaleFactor,
                     )
                     HorizontalPager(
                         state = pagerState,
@@ -174,10 +172,10 @@ fun WatchlistScreen(
                         beyondViewportPageCount = 1,
                         userScrollEnabled = state.watchlists.size > 1 &&
                             !state.isSelecting && reorderingWatchlistId == null,
-                        key = { page -> watchlistIds[page] },
+                        key = { page -> currentWatchlists.getOrNull(page)?.id ?: "removed-watchlist-$page" },
                         flingBehavior = flingBehavior,
                     ) { page ->
-                        val watchlist = state.watchlists[page]
+                        val watchlist = currentWatchlists.getOrNull(page) ?: return@HorizontalPager
                         WatchlistPagerPage(
                             watchlist = watchlist,
                             screenState = state,

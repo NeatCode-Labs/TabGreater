@@ -127,7 +127,7 @@ private fun WatchlistTileGrid(
                 val dragging = tile.itemId == reorder.draggingItemId
                 val itemModifier = Modifier
                     .fillMaxWidth()
-                    .then(if (dragging) Modifier else Modifier.animateItem())
+                    .then(if (dragging || reorder.ownsPlacementAnimation) Modifier else Modifier.animateItem())
                 val peer = if (page.tileSize == TileSize.SMALL) {
                     page.tiles.getOrNull(if (index % 2 == 0) index + 1 else index - 1)
                 } else {

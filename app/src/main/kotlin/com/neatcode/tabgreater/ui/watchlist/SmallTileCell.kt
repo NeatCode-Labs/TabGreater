@@ -37,12 +37,11 @@ internal fun SmallTileCell(
         }
 
     Layout(
-        modifier = modifier,
+        modifier = modifier.then(itemModifier),
         content = {
             TickerTile(
                 tile = tile,
                 size = TileSize.SMALL,
-                modifier = itemModifier,
                 selected = tile.itemId in selectedIds,
                 shrinkZeros = shrinkZeros,
             )

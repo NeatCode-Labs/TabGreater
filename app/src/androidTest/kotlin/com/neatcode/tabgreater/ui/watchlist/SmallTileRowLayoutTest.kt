@@ -235,6 +235,58 @@ class SmallTileRowLayoutTest {
         }
     }
 
+    @Test fun neighbourSlidesDuringTheDragAndReleasedTileSettlesIntoItsSlot() {
+        val first = previewTile().copy(itemId = 41, pair = "A/USDT")
+        val second = previewTile().copy(itemId = 42, pair = "B/USDT")
+        val tiles = mutableStateOf(listOf(first, second))
+        compose.setContent {
+            TabGreaterTheme {
+                SmallTileGrid(
+                    tiles = tiles.value,
+                    selectedIds = emptySet(),
+                    isSelecting = false,
+                    onMove = { from, to ->
+                        tiles.value = tiles.value.toMutableList().apply { add(to, removeAt(from)) }
+                    },
+                    onDragEnd = {},
+                    onLongPress = {},
+                    onOpenChart = {},
+                    onToggleSelection = {},
+                )
+            }
+        }
+
+        fun centre(pair: String) = compose.onNodeWithText(pair).fetchSemanticsNode().boundsInRoot.center
+        val grid = compose.onNodeWithTag("smallTileGrid")
+        val gridOrigin = grid.fetchSemanticsNode().boundsInRoot.topLeft
+        val start = centre(first.pair)
+        val end = centre(second.pair)
+        val release = start + (end - start) * 0.68f
+        grid.performTouchInput {
+            down(start - gridOrigin)
+            advanceEventTime(650)
+            moveTo(start - gridOrigin + Offset(1f, 0f))
+        }
+        compose.mainClock.autoAdvance = false
+        try {
+            grid.performTouchInput { moveTo(release - gridOrigin) }
+            compose.mainClock.advanceTimeBy(64)
+            val neighbourX = centre(second.pair).x
+            assertTrue("Neighbour should be moving, x=$neighbourX", neighbourX > start.x && neighbourX < end.x)
+            compose.mainClock.advanceTimeBy(240)
+            val heldX = centre(first.pair).x
+            grid.performTouchInput { up() }
+            compose.mainClock.advanceTimeBy(80)
+            val landingX = centre(first.pair).x
+            assertTrue("Drop should continue from x=$heldX, x=$landingX", landingX > heldX && landingX < end.x)
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        compose.waitForIdle()
+        assertEquals(end.x, centre(first.pair).x, 1f)
+        assertEquals(start.x, centre(second.pair).x, 1f)
+    }
+
     @Composable
     private fun SmallTileGrid(
         tiles: List<TileUiState>,
@@ -274,10 +326,9 @@ class SmallTileRowLayoutTest {
                 verticalArrangement = Arrangement.spacedBy(TGDimens.GRID_GAP_DP.dp),
             ) {
                 itemsIndexed(tiles, key = { _, tile -> tile.itemId }) { index, tile ->
-                    val dragging = tile.itemId == reorder.draggingItemId
                     val itemModifier = Modifier
                         .fillMaxWidth()
-                        .then(if (dragging) Modifier else Modifier.animateItem())
+                        .then(if (reorder.ownsPlacementAnimation) Modifier else Modifier.animateItem())
                     val peer = tiles.getOrNull(if (index % 2 == 0) index + 1 else index - 1)
                     if (peer != null) {
                         SmallTileCell(

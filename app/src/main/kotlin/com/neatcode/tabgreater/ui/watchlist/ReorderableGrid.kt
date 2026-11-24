@@ -1,6 +1,6 @@
 package com.neatcode.tabgreater.ui.watchlist
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -12,10 +12,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -28,12 +30,16 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.neatcode.tabgreater.core.model.TGDimens
+import kotlinx.coroutines.flow.collect
 
 /** Elevation of the tile that is following the finger. */
 private const val DRAG_ELEVATION_DP = 8f
 
 /** The lifted tile grows by this much while it follows the finger, and animates back on drop. */
 private const val DRAG_SCALE = 1.03f
+private const val REORDER_ANIMATION_DURATION_MS = 180L
+private const val REORDER_ANIMATION_DURATION_NS = REORDER_ANIMATION_DURATION_MS * 1_000_000L
+private const val PENDING_LAYOUT_TIMEOUT_NS = 120_000_000L
 
 /** Auto-scroll starts once the dragged tile comes this close to an edge (fraction of its height). */
 private const val EDGE_MARGIN_FRACTION = 0.6f
@@ -41,6 +47,13 @@ private const val EDGE_MARGIN_FRACTION = 0.6f
 /** Pixels per frame at the steepest, so a long list stays controllable. */
 private const val MAX_AUTO_SCROLL_PX = 24f
 private const val AUTO_SCROLL_FACTOR = 0.25f
+
+/** Stable-keyed layout position used to animate sibling slots without relying on system scale. */
+internal data class ReorderItemPosition(
+    val itemId: Long,
+    val index: Int,
+    val offset: Offset,
+)
 
 /**
  * How a finished gesture is read: it was a **drag** (commit the new order) as soon as it did
@@ -87,11 +100,45 @@ class ReorderState internal constructor(
     var draggingItemId: Long? by mutableStateOf(null)
         private set
 
+    private var settlingItemId: Long? by mutableStateOf(null)
+
+    /** Suppress scaled LazyGrid placement while this state animates reorder positions itself. */
+    internal val ownsPlacementAnimation: Boolean
+        get() = draggingItemId != null || settlingItemId != null ||
+            placementStartOffsets.isNotEmpty() || pendingPositions != null
+
+    internal val animationActive: Boolean
+        get() = draggingItemId != null || settlingItemId != null ||
+            placementStartOffsets.isNotEmpty() || pendingPositions != null
+
+    internal val hasPendingMove: Boolean
+        get() = pendingPositions != null
+
     /** Distance travelled since the long press fired. */
     private var dragOffset by mutableStateOf(Offset.Zero)
 
     /** Where the dragged tile sat when the drag started (viewport coordinates). */
     private var startOffset = IntOffset.Zero
+
+    /** Absolute viewport position under the finger at release, before the target slot settles. */
+    private var settleStartOffset = Offset.Zero
+    private var settleStartNanos: Long? = null
+    private var settleProgress by mutableFloatStateOf(1f)
+    private var settleStartScale = 1f
+
+    private var liftStartNanos: Long? = null
+    private var liftProgress by mutableFloatStateOf(1f)
+    private var liftStartScale = 1f
+
+    /** Start displacement per stable item key for the latest sibling placement transition. */
+    private var placementStartOffsets by mutableStateOf(emptyMap<Long, Offset>())
+    private var placementStartNanos: Long? = null
+    private var placementProgress by mutableFloatStateOf(1f)
+
+    private var pendingPositions: Map<Long, ReorderItemPosition>? by mutableStateOf(null)
+    private var pendingDraggedItemId: Long? = null
+    private var pendingTargetIndex: Int? = null
+    private var pendingLayoutStartNanos: Long? = null
 
     /** Captured from the pointer input scope when the gesture starts. */
     private var touchSlop = 0f
@@ -123,9 +170,19 @@ class ReorderState internal constructor(
 
     internal fun onDragStart(itemId: Long, touchSlop: Float) {
         val info = itemInfo(itemId) ?: return
+        val currentScale = scaleFor(itemId)
         longPressActive = true
         draggingItemId = itemId
-        startOffset = info.offset
+        val currentPosition = Offset(info.offset.x.toFloat(), info.offset.y.toFloat()) + placementOffsetFor(itemId)
+        startOffset = IntOffset(currentPosition.x.toInt(), currentPosition.y.toInt())
+        if (settlingItemId == itemId) {
+            settlingItemId = null
+            settleStartNanos = null
+            settleProgress = 1f
+        }
+        liftStartScale = currentScale
+        liftProgress = 0f
+        liftStartNanos = null
         dragOffset = Offset.Zero
         this.touchSlop = touchSlop
         exceededSlop = false
@@ -147,6 +204,13 @@ class ReorderState internal constructor(
     internal fun onDragStop(itemId: Long) {
         val wasDragging = draggingItemId != null
         val wasDrag = endedAsDrag(reportedMove, exceededSlop, dragOffset.getDistance(), touchSlop)
+        if (wasDragging) {
+            settleStartScale = scaleFor(itemId)
+            settlingItemId = itemId
+            settleStartOffset = Offset(startOffset.x.toFloat(), startOffset.y.toFloat()) + dragOffset
+            settleStartNanos = null
+            settleProgress = 0f
+        }
         draggingItemId = null
         dragOffset = Offset.Zero
         exceededSlop = false
@@ -161,12 +225,94 @@ class ReorderState internal constructor(
      * reorder or an auto-scroll underneath the tile does not make it jump.
      */
     internal fun translationFor(itemId: Long): Offset {
-        if (itemId != draggingItemId) return Offset.Zero
+        if (itemId != draggingItemId && itemId != settlingItemId &&
+            placementStartOffsets[itemId] == null && pendingPositions?.containsKey(itemId) != true
+        ) {
+            return Offset.Zero
+        }
         val info = itemInfo(itemId) ?: return Offset.Zero
-        return Offset(
-            startOffset.x + dragOffset.x - info.offset.x,
-            startOffset.y + dragOffset.y - info.offset.y,
-        )
+        val layoutOffset = Offset(info.offset.x.toFloat(), info.offset.y.toFloat())
+        if (itemId == draggingItemId) {
+            return Offset(startOffset.x.toFloat() + dragOffset.x, startOffset.y.toFloat() + dragOffset.y) - layoutOffset
+        }
+        if (itemId == settlingItemId) {
+            val remaining = 1f - FastOutSlowInEasing.transform(settleProgress)
+            return (settleStartOffset - layoutOffset) * remaining
+        }
+        return placementOffsetFor(itemId)
+    }
+
+    internal fun scaleFor(itemId: Long): Float = when {
+        itemId == draggingItemId -> {
+            val progress = FastOutSlowInEasing.transform(liftProgress)
+            liftStartScale + (DRAG_SCALE - liftStartScale) * progress
+        }
+        itemId == settlingItemId -> {
+            val progress = FastOutSlowInEasing.transform(settleProgress)
+            settleStartScale + (1f - settleStartScale) * progress
+        }
+        else -> 1f
+    }
+
+    internal fun shadowFor(itemId: Long): Float = when {
+        itemId == draggingItemId -> 1f
+        itemId == settlingItemId -> 1f - FastOutSlowInEasing.transform(settleProgress)
+        else -> 0f
+    }
+
+    internal fun isRaised(itemId: Long): Boolean = itemId == draggingItemId || itemId == settlingItemId
+
+    /** Advance the short reorder motion independently from Android's animator duration scale. */
+    internal fun advanceAnimations(frameTimeNanos: Long) {
+        if (draggingItemId != null && liftProgress < 1f) {
+            val start = liftStartNanos ?: frameTimeNanos.also { liftStartNanos = it }
+            liftProgress = ((frameTimeNanos - start).toFloat() / REORDER_ANIMATION_DURATION_NS)
+                .coerceIn(0f, 1f)
+            if (liftProgress >= 1f) liftStartNanos = null
+        }
+        if (settlingItemId != null) {
+            val start = settleStartNanos ?: frameTimeNanos.also { settleStartNanos = it }
+            settleProgress = ((frameTimeNanos - start).toFloat() / REORDER_ANIMATION_DURATION_NS)
+                .coerceIn(0f, 1f)
+            if (settleProgress >= 1f) {
+                settlingItemId = null
+                settleStartNanos = null
+            }
+        }
+        if (placementStartOffsets.isNotEmpty()) {
+            val start = placementStartNanos ?: frameTimeNanos.also { placementStartNanos = it }
+            placementProgress = ((frameTimeNanos - start).toFloat() / REORDER_ANIMATION_DURATION_NS)
+                .coerceIn(0f, 1f)
+            if (placementProgress >= 1f) {
+                placementStartOffsets = emptyMap()
+                placementStartNanos = null
+            }
+        }
+        if (pendingPositions != null) {
+            val start = pendingLayoutStartNanos ?: frameTimeNanos.also { pendingLayoutStartNanos = it }
+            if (frameTimeNanos - start >= PENDING_LAYOUT_TIMEOUT_NS) clearPendingMove()
+        }
+    }
+
+    /** Consumes the new keyed layout after a requested item move is measured. */
+    internal fun onLayoutChanged(items: List<ReorderItemPosition>) {
+        val current = items.associateBy(ReorderItemPosition::itemId)
+        val before = pendingPositions
+        val draggedId = pendingDraggedItemId
+        val targetIndex = pendingTargetIndex
+        if (before != null && draggedId != null && targetIndex != null && current[draggedId]?.index == targetIndex) {
+            val offsets = current.mapNotNull { (id, after) ->
+                if (id == draggedId) return@mapNotNull null
+                val old = before[id] ?: return@mapNotNull null
+                if (old.index == after.index) return@mapNotNull null
+                val delta = old.offset - after.offset
+                if (delta.getDistance() <= 0.5f) null else id to delta
+            }.toMap()
+            placementStartOffsets = offsets
+            placementProgress = 0f
+            placementStartNanos = null
+            clearPendingMove()
+        }
     }
 
     /** Scroll step for this frame, positive = towards the end of the list, `0` = no auto-scroll. */
@@ -196,12 +342,47 @@ class ReorderState internal constructor(
         val centreX = startOffset.x + dragOffset.x + info.size.width / 2f
         val centreY = startOffset.y + dragOffset.y + info.size.height / 2f
         val target = gridState.layoutInfo.visibleItemsInfo.firstOrNull { other ->
+            if (other.key !is Long) return@firstOrNull false
+            val otherOffset = Offset(other.offset.x.toFloat(), other.offset.y.toFloat())
             other.key != id &&
-                centreX >= other.offset.x && centreX < other.offset.x + other.size.width &&
-                centreY >= other.offset.y && centreY < other.offset.y + other.size.height
+                centreX >= otherOffset.x && centreX < otherOffset.x + other.size.width &&
+                centreY >= otherOffset.y && centreY < otherOffset.y + other.size.height
         } ?: return
+        if (pendingPositions == null) {
+            pendingPositions = gridState.layoutInfo.visibleItemsInfo.mapNotNull { visible ->
+                val visibleId = visible.key as? Long ?: return@mapNotNull null
+                visibleId to ReorderItemPosition(
+                    itemId = visibleId,
+                    index = visible.index,
+                    offset = Offset(visible.offset.x.toFloat(), visible.offset.y.toFloat()) + placementOffsetFor(visibleId),
+                )
+            }.toMap()
+            pendingLayoutStartNanos = null
+        }
+        pendingDraggedItemId = id
+        pendingTargetIndex = target.index
         reportedMove = true
         onMove(info.index, target.index)
+    }
+
+    private fun placementOffsetFor(itemId: Long): Offset {
+        val pendingPosition = pendingPositions?.get(itemId)
+        val start = placementStartOffsets[itemId]
+        if (pendingPosition == null && start == null) return Offset.Zero
+        val info = itemInfo(itemId)
+        if (pendingPosition != null && info != null && pendingPosition.index != info.index) {
+            return pendingPosition.offset - Offset(info.offset.x.toFloat(), info.offset.y.toFloat())
+        }
+        if (start == null) return Offset.Zero
+        val progress = FastOutSlowInEasing.transform(placementProgress)
+        return start * (1f - progress)
+    }
+
+    private fun clearPendingMove() {
+        pendingPositions = null
+        pendingDraggedItemId = null
+        pendingTargetIndex = null
+        pendingLayoutStartNanos = null
     }
 
     private fun itemInfo(itemId: Long): LazyGridItemInfo? =
@@ -237,15 +418,32 @@ fun rememberReorderState(
         )
     }
 
-    LaunchedEffect(state, state.draggingItemId) {
-        if (state.draggingItemId == null) return@LaunchedEffect
-        while (true) {
-            withFrameNanos { }
-            val amount = state.autoScrollAmount()
-            if (amount != 0f) {
-                gridState.scrollBy(amount)
-                // The list moved under the finger, so the hovered cell may have changed.
-                state.checkForMove()
+    LaunchedEffect(state, gridState, state.hasPendingMove) {
+        if (!state.hasPendingMove) return@LaunchedEffect
+        snapshotFlow {
+            gridState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
+                val id = info.key as? Long ?: return@mapNotNull null
+                ReorderItemPosition(
+                    itemId = id,
+                    index = info.index,
+                    offset = Offset(info.offset.x.toFloat(), info.offset.y.toFloat()),
+                )
+            }
+        }.collect(state::onLayoutChanged)
+    }
+
+    LaunchedEffect(state, state.animationActive) {
+        if (!state.animationActive) return@LaunchedEffect
+        while (state.animationActive) {
+            val frameTime = withFrameNanos { it }
+            state.advanceAnimations(frameTime)
+            if (state.draggingItemId != null) {
+                val amount = state.autoScrollAmount()
+                if (amount != 0f) {
+                    gridState.scrollBy(amount)
+                    // The list moved under the finger, so the hovered cell may have changed.
+                    state.checkForMove()
+                }
             }
         }
     }
@@ -262,22 +460,16 @@ fun rememberReorderState(
 @Composable
 fun Modifier.reorderable(state: ReorderState, itemId: Long, enabled: Boolean = true): Modifier {
     val dragging = state.draggingItemId == itemId
-    val scale = animateFloatAsState(
-        targetValue = if (dragging) DRAG_SCALE else 1f,
-        label = "tileDragScale",
-    )
     return this
-        .zIndex(if (dragging) 1f else 0f)
+        .zIndex(if (state.isRaised(itemId)) 1f else 0f)
         .graphicsLayer {
             val translation = state.translationFor(itemId)
             translationX = translation.x
             translationY = translation.y
-            scaleX = scale.value
-            scaleY = scale.value
+            scaleX = state.scaleFor(itemId)
+            scaleY = state.scaleFor(itemId)
             shape = RoundedCornerShape(TGDimens.TILE_CORNER_DP.dp)
-            if (state.draggingItemId == itemId) {
-                shadowElevation = DRAG_ELEVATION_DP.dp.toPx()
-            }
+            shadowElevation = DRAG_ELEVATION_DP.dp.toPx() * state.shadowFor(itemId)
         }
         .pointerInput(itemId, enabled) {
             if (!enabled) return@pointerInput
