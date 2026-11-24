@@ -29,6 +29,13 @@ interface MarketDataRepository {
     /** Accepted REST/WS state in this process; absence never implies a fresh disk snapshot. */
     fun currentState(key: MarketKey): MarketState? = null
 
+    /**
+     * Reads prices already known in this process or persisted in the snapshot cache, without
+     * acquiring a market subscription or starting a REST refresh.
+     */
+    suspend fun cachedMarketStates(keys: Set<MarketKey>): Map<MarketKey, MarketState> =
+        keys.mapNotNull { key -> currentState(key)?.let { key to it } }.toMap()
+
     /** Aggregate status across the exchanges currently subscribed. */
     val status: Flow<LiveStatus>
 

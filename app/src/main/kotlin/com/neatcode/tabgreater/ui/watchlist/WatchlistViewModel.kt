@@ -31,6 +31,9 @@ import com.neatcode.tabgreater.core.model.Watchlist
 import com.neatcode.tabgreater.core.model.WatchlistItem
 import com.neatcode.tabgreater.ui.cardDisplayLabel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -145,25 +148,30 @@ class WatchlistViewModel(
             lists.firstOrNull { it.id == id } ?: lists.firstOrNull()
         }.distinctUntilChanged()
 
-    private val itemsFlow: Flow<List<WatchlistItem>> = selectedWatchlist
-        .map { it?.id }
-        .distinctUntilChanged()
-        .flatMapLatest { id ->
-            if (id == null) flowOf(emptyList()) else watchlistRepository.observeItems(id)
+    private val selectedItemsFlow: Flow<WatchlistItems> = selectedWatchlist
+        .flatMapLatest { watchlist ->
+            val id = watchlist?.id
+            if (id == null) flowOf(WatchlistItems(null, emptyList()))
+            else watchlistRepository.observeItems(id).map { WatchlistItems(id, it) }
         }
         .distinctUntilChanged()
 
+    private val itemsFlow: Flow<List<WatchlistItem>> = selectedItemsFlow
+        .map { it.items }
+        .distinctUntilChanged()
+
     /** [itemsFlow] with the order the finger is currently dragging applied on top. */
-    private val orderedItemsFlow: Flow<List<WatchlistItem>> =
-        combine(itemsFlow, pendingOrder) { items, order ->
+    private val orderedItemsFlow: Flow<WatchlistItems> =
+        combine(selectedItemsFlow, pendingOrder) { current, order ->
+            val items = current.items
             when {
-                order == null -> items
+                order == null -> current
                 // Room caught up with the drop: drop the override and follow the database again.
                 items.sortedBy { it.position }.map { it.id } == order -> {
                     pendingOrder.value = null
-                    items
+                    current
                 }
-                else -> orderItems(items, order)
+                else -> current.copy(items = orderItems(items, order))
             }
         }
 
@@ -274,15 +282,16 @@ class WatchlistViewModel(
      * itself: the key set opens the gate while the map is still being filled, and each market's
      * first candle that replaces the cached one opens it once more.
      */
-    private val sparklinesFlow: Flow<Map<MarketKey, Sparkline>> = periodFlow
+    private val sparklinesFlow: Flow<SparklineInputs> = periodFlow
         .flatMapLatest { period ->
             keysFlow.observeEach { key ->
                 sparklineRepository.observeSparkline(key, period)
                     .catch { e -> Log.w(TAG, "sparkline failed for ${key.value}", e) }
             }.throttleTiles(::redrawsTile, alwaysChanged = { a, b -> a.history != b.history }) { refreshMs.value }
+                .map { values -> SparklineInputs(period, values) }
         }
-        .onStart { emit(emptyMap()) }
-        .catch { e -> Log.w(TAG, "sparkline stream failed", e); emit(emptyMap()) }
+        .onStart { emit(SparklineInputs(null, emptyMap())) }
+        .catch { e -> Log.w(TAG, "sparkline stream failed", e); emit(SparklineInputs(null, emptyMap())) }
 
     private val itemCountsFlow: Flow<Map<Long, Int>> =
         flow { emitAll(watchlistRepository.observeItemCounts()) }
@@ -301,7 +310,7 @@ class WatchlistViewModel(
 
     private val tileInputs: Flow<TileInputs> =
         combine(orderedItemsFlow, marketsFlow, tickersFlow, sparklinesFlow) { items, markets, tickers, sparks ->
-            TileInputs(items, markets, tickers, sparks)
+            TileInputs(items.watchlistId, items.items, markets, tickers, sparks.values, sparks.period)
         }
 
     val uiState: StateFlow<WatchlistUiState> = combine(
@@ -321,6 +330,9 @@ class WatchlistViewModel(
         val issues = priceIssues(inputs, refresh, now)
         val requestedKeys = inputs.items.mapTo(HashSet()) { it.key }
         val refreshing = refresh.activeKeys.any { it in requestedKeys }
+        val tilesReady = watchlist?.id == inputs.watchlistId &&
+            (requestedKeys.isEmpty() ||
+                (inputs.tickers.keys.containsAll(requestedKeys) && inputs.sparkPeriod == period))
         WatchlistUiState(
             watchlists = lists,
             selectedId = watchlist?.id,
@@ -342,8 +354,91 @@ class WatchlistViewModel(
             shrinkZeros = extras.shrinkZeros,
             selectedIds = pruneSelection(extras.selected, tiles),
             itemCounts = extras.counts,
+            tilesWatchlistId = inputs.watchlistId,
+            tilesReady = tilesReady,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), WatchlistUiState())
+
+    /**
+     * Cached, per-id content for pages that the HorizontalPager composes around the selected page.
+     * This path reads Room/process caches only; it never collects observeMarketState or
+     * observeSparkline, so a preview cannot acquire ticker or candle subscriptions.
+     */
+    fun previewPageState(watchlistId: Long): Flow<WatchlistPageUiState?> = combine(
+        watchlistRepository.observeWatchlist(watchlistId),
+        watchlistRepository.observeItems(watchlistId),
+    ) { watchlist, items ->
+        if (watchlist == null) null else watchlist to items
+    }
+        .distinctUntilChanged()
+        .flatMapLatest { source ->
+            if (source == null) flowOf<WatchlistPageUiState?>(null)
+            else flow<WatchlistPageUiState?> {
+                val (watchlist, items) = source
+                val inputs = buildCachedPageInputs(watchlist, items)
+                emit(pageState(watchlist, inputs))
+
+                if (items.isNotEmpty()) {
+                    val sparks = loadCachedSparklines(items, watchlist.period)
+                    if (sparks.isNotEmpty()) emit(pageState(watchlist, inputs.copy(sparks = sparks)))
+                }
+            }
+        }
+        .catch { e ->
+            Log.w(TAG, "watchlist preview failed for $watchlistId", e)
+            emit(null)
+        }
+
+    private suspend fun buildCachedPageInputs(
+        watchlist: Watchlist,
+        items: List<WatchlistItem>,
+    ): TileInputs {
+        val keys = items.mapTo(LinkedHashSet()) { it.key }
+        val markets = loadMarketMetadata(keys).mapValues { (_, market) ->
+            CardMarket(market, market.cardDisplayLabel())
+        }
+        val tickers = try {
+            marketDataRepository.cachedMarketStates(keys)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "cached ticker preview failed for ${watchlist.id}", e)
+            emptyMap()
+        }
+        return TileInputs(watchlist.id, items, markets, tickers, emptyMap(), watchlist.period)
+    }
+
+    private suspend fun loadCachedSparklines(
+        items: List<WatchlistItem>,
+        period: SparkPeriod,
+    ): Map<MarketKey, Sparkline> = coroutineScope {
+        items.asSequence().map { it.key }.distinct().map { key ->
+            async {
+                key to try {
+                    sparklineRepository.cached(key, period)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "cached sparkline preview failed for ${key.value}", e)
+                    Sparkline.EMPTY
+                }
+            }
+        }.toList().awaitAll().toMap()
+    }
+
+    private fun pageState(watchlist: Watchlist, inputs: TileInputs): WatchlistPageUiState =
+        WatchlistPageUiState(
+            watchlistId = watchlist.id,
+            period = watchlist.period,
+            tileSize = watchlist.tileSize,
+            sort = watchlist.sort,
+            tiles = buildTiles(
+                inputs,
+                watchlist.period,
+                watchlist.sort,
+                nowEpochMs(),
+            ),
+        )
 
     init {
         viewModelScope.launch {
@@ -739,10 +834,22 @@ private data class DailyOutcomeItem(
 
 /** The four independent streams a tile is assembled from. */
 private data class TileInputs(
+    val watchlistId: Long?,
     val items: List<WatchlistItem>,
     val markets: Map<MarketKey, CardMarket>,
     val tickers: Map<MarketKey, MarketState>,
     val sparks: Map<MarketKey, Sparkline>,
+    val sparkPeriod: SparkPeriod?,
+)
+
+private data class WatchlistItems(
+    val watchlistId: Long?,
+    val items: List<WatchlistItem>,
+)
+
+private data class SparklineInputs(
+    val period: SparkPeriod?,
+    val values: Map<MarketKey, Sparkline>,
 )
 
 

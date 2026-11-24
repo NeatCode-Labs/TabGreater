@@ -80,6 +80,24 @@ class LiveMarketDataRepository(
 
     override fun currentState(key: MarketKey): MarketState? = accepted.value[key]?.aged(elapsed())
 
+    override suspend fun cachedMarketStates(keys: Set<MarketKey>): Map<MarketKey, MarketState> {
+        if (keys.isEmpty()) return emptyMap()
+        val snapshots = snapshotDao.getByKeys(keys.map { it.value })
+            .mapNotNull { row -> MarketKey.parseOrNull(row.marketKey)?.let { it to row.toTicker(it) } }
+            .toMap()
+        val acceptedNow = accepted.value
+        val now = elapsed()
+        return keys.associateWith { key ->
+            val current = acceptedNow[key]
+            val state = if (current == null) {
+                MarketState(snapshots[key])
+            } else {
+                current.copy(ticker = current.ticker ?: snapshots[key])
+            }
+            state.aged(now)
+        }
+    }
+
     override fun observeMarketState(keys: Set<MarketKey>): Flow<Map<MarketKey, MarketState>> = combine(
         observeTickers(keys), accepted,
         flow { while (true) { emit(elapsed()); delay(STATUS_TICK_MS) } },

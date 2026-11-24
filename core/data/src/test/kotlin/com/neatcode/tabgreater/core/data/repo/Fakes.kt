@@ -228,6 +228,9 @@ internal class FakeTickerSnapshotDao : TickerSnapshotDao {
 
     override suspend fun get(key: String): TickerSnapshotEntity? = rows.value.firstOrNull { it.marketKey == key }
 
+    override suspend fun getByKeys(keys: List<String>): List<TickerSnapshotEntity> =
+        rows.value.filter { it.marketKey in keys }
+
     override suspend fun upsert(snapshot: TickerSnapshotEntity) = upsertAll(listOf(snapshot))
 
     override suspend fun upsertAll(snapshots: List<TickerSnapshotEntity>) {

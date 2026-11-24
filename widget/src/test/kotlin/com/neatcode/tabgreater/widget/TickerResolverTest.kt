@@ -135,6 +135,11 @@ private class FakeSnapshots(
         return stored?.takeIf { it.marketKey == key }
     }
 
+    override suspend fun getByKeys(keys: List<String>): List<TickerSnapshotEntity> {
+        if (fail) error("database unavailable")
+        return listOfNotNull(stored?.takeIf { it.marketKey in keys })
+    }
+
     override suspend fun upsert(snapshot: TickerSnapshotEntity) = Unit
     override suspend fun upsertAll(snapshots: List<TickerSnapshotEntity>) = Unit
     override suspend fun distinctKeys(): List<String> = listOfNotNull(stored?.marketKey)

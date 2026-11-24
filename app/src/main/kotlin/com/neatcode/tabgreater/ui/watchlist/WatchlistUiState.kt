@@ -117,7 +117,21 @@ data class WatchlistUiState(
     val shrinkZeros: Boolean = true,
     val selectedIds: Set<Long> = emptySet(),
     val itemCounts: Map<Long, Int> = emptyMap(),
+    /** Watchlist id that produced [tiles], preventing stale tiles during a page switch. */
+    val tilesWatchlistId: Long? = null,
+    /** True after the selected page's ticker cache has emitted for its current item keys. */
+    val tilesReady: Boolean = false,
 ) {
     /** `true` while the contextual action bar replaces the app bar. */
     val isSelecting: Boolean get() = selectedIds.isNotEmpty()
 }
+
+/** Cached page content for a neighboring watchlist; it does not own live subscriptions. */
+@Immutable
+data class WatchlistPageUiState(
+    val watchlistId: Long,
+    val period: SparkPeriod,
+    val tileSize: TileSize,
+    val sort: SortMode,
+    val tiles: List<TileUiState>,
+)

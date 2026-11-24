@@ -21,6 +21,7 @@ class LiveMarketRecoveryTest {
         var failWrites = false
         override fun observeByKeys(keys: List<String>) = rows.map { it.filterKeys { key -> key in keys }.values.toList() }
         override suspend fun get(key: String) = rows.value[key]
+        override suspend fun getByKeys(keys: List<String>) = rows.value.filterKeys { it in keys }.values.toList()
         override suspend fun upsert(snapshot: TickerSnapshotEntity) { upsertAll(listOf(snapshot)) }
         override suspend fun upsertAll(snapshots: List<TickerSnapshotEntity>) {
             if (failWrites) error("disk full")
@@ -70,6 +71,20 @@ class LiveMarketRecoveryTest {
         assertEquals(2.0, repo.latest.value.getValue(key).last, 0.0)
         assertEquals(2.0, dao.get(key.value)!!.last, 0.0)
         assertEquals(PriceFreshness.CURRENT, repo.currentState(key)!!.freshness)
+    }
+
+    @Test fun `cached market state reads Room without starting a market subscription`() = runTest {
+        val dao = Dao()
+        dao.upsert(price(12.0).toSnapshotEntity())
+        val adapter = Adapter()
+        val repo = repo(dao, adapter)
+
+        val cached = repo.cachedMarketStates(setOf(key)).getValue(key)
+
+        assertEquals(12.0, cached.ticker!!.last, 0.0)
+        assertEquals(PriceFreshness.CACHED, cached.freshness)
+        assertEquals(0, adapter.calls)
+        assertNull(repo.currentState(key))
     }
     @Test fun `late REST cannot overwrite a newer stream value in memory or Room`() = runTest {
         val dao = Dao()

@@ -20,12 +20,13 @@ internal fun SmallTileCell(
     shrinkZeros: Boolean,
     reorder: ReorderState,
     modifier: Modifier = Modifier,
+    reorderEnabled: Boolean = !isSelecting,
     peerWidthAdjustmentPx: Int = 0,
     onOpenChart: (MarketKey) -> Unit,
     onToggleSelection: (Long) -> Unit,
 ) {
     val itemModifier = Modifier
-        .reorderable(reorder, tile.itemId, enabled = !isSelecting)
+        .reorderable(reorder, tile.itemId, enabled = reorderEnabled)
         .clickable {
             when {
                 // The release that ends a long press is not a tap.

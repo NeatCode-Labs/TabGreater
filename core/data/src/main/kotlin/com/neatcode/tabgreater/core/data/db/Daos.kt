@@ -318,6 +318,9 @@ interface TickerSnapshotDao {
     @Query("SELECT * FROM ticker_snapshots WHERE market_key = :key")
     suspend fun get(key: String): TickerSnapshotEntity?
 
+    @Query("SELECT * FROM ticker_snapshots WHERE market_key IN (:keys)")
+    suspend fun getByKeys(keys: List<String>): List<TickerSnapshotEntity>
+
     @Upsert
     suspend fun upsert(snapshot: TickerSnapshotEntity)
 

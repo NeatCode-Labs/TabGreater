@@ -518,6 +518,36 @@ class WatchlistViewModelTest {
         assertEquals(3f, vm.uiState.value.tiles.single().spark!!.last(), 0f)
     }
 
+    @Test
+    fun `neighbor preview renders cached tiles without subscribing to its markets or sparklines`() = runTest(dispatcher) {
+        val main = watchlists.ensureDefault()
+        val alts = watchlists.createWatchlist("Alts")
+        watchlists.addItems(main, listOf(btc))
+        watchlists.addItems(alts, listOf(eth))
+        live.tickers.value = mapOf(btc to ticker(101.0), eth to ticker(202.0, eth))
+        sparklines.setPoints(btc, 1f, 2f)
+        sparklines.setPoints(eth, 3f, 4f)
+
+        val vm = viewModel()
+        collectState(vm)
+        advanceUntilIdle()
+        var preview: WatchlistPageUiState? = null
+        val previewJob = backgroundScope.launch { vm.previewPageState(alts).collect { preview = it } }
+        runCurrent()
+        advanceUntilIdle()
+
+        assertNotNull(preview)
+        assertEquals(alts, preview!!.watchlistId)
+        assertEquals(listOf(eth), preview!!.tiles.map { it.key })
+        assertEquals(listOf(3f, 202f), preview!!.tiles.single().spark!!.toList())
+        assertTrue(live.observedKeySets.isNotEmpty())
+        assertTrue(live.observedKeySets.none { eth in it })
+        assertEquals(setOf(btc), sparklines.active)
+        assertEquals(0, sparklines.startsFor(eth))
+
+        previewJob.cancel()
+    }
+
     private fun ticker(last: Double, key: MarketKey = btc) =
         Ticker(key = key, last = last, changePct24h = 1.0, timestamp = 0L)
 
